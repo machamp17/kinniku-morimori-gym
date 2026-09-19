@@ -23,14 +23,14 @@ const P = await import('../js/art/palette.js');
 const MALE = { ...DEFAULT_LOOK, type: 'male', hairStyle: 'short', hairColor: 'darkbrown', skin: 'skin2', topColor: 'black', bottomColor: 'charcoal' };
 const FEMALE = { ...DEFAULT_LOOK, type: 'female', hairStyle: 'pony', hairColor: 'brown', skin: 'skin1', topColor: 'teal', bottomColor: 'black', bottom: 'pants' };
 const ST0 = { chest: 0, back: 0, shoulder: 0, arm: 0, leg: 0, abs: 0 };
-const ST1 = { chest: 1, back: 1, shoulder: 5, arm: 1, leg: 1, abs: 1 };
-const ST2 = { chest: 2, back: 2, shoulder: 12, arm: 2, leg: 2, abs: 2 };
+const ST1 = { chest: 1, back: 1, shoulder: 10, arm: 1, leg: 1, abs: 1 };
+const ST2 = { chest: 2, back: 2, shoulder: 20, arm: 2, leg: 2, abs: 2 };
 
 const presets = {
   faces: () => [MALE, FEMALE].flatMap((b) => FACES.map((f) => [{ ...b, face: f.id }, 'detail'])),
   gymfaces: () => [MALE, FEMALE].flatMap((b) => FACES.map((f) => [{ ...b, face: f.id }, 'gym'])),
   stages: () => [MALE, FEMALE].flatMap((b) => [ST0, ST1, ST2].map((s) => [{ ...b, stages: s }, 'detail'])),
-  shoulders: () => [MALE, FEMALE].flatMap((b) => [0, 2, 4, 6, 8, 10, 12].map((i) => [{ ...b, stages: { ...ST0, shoulder: i } }, 'detail'])),
+  shoulders: () => [MALE, FEMALE].flatMap((b) => [0, 3, 6, 10, 13, 16, 20].map((i) => [{ ...b, stages: { ...ST0, shoulder: i } }, 'detail'])),
   hair: () => [MALE, FEMALE].flatMap((b) => P.HAIR_STYLES.map((h) => [{ ...b, hairStyle: h.id }, 'detail'])),
   haircolor: () => P.HAIR_COLORS.map((c) => [{ ...FEMALE, hairStyle: 'bob', hairColor: c.id }, 'detail']),
   skins: () => [MALE, FEMALE].flatMap((b) => P.SKINS.map((s) => [{ ...b, skin: s.id }, 'detail'])),

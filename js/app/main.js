@@ -1,7 +1,7 @@
 // 筋肉モリモリジム ベータ（この端末に保存）。認証・クラウド保存は Phase 2。
 // 設定・見た目は 'kmg2.demo.*'、記録は store.js（'kmg2.data.v1'）。旧版の 'kmg.*' には触れない。
 
-import { characterCanvas, stageOf, DEFAULT_LOOK, FACES } from '../art/character.js';
+import { characterCanvas, stageOf, shoulderStageFromExp, shoulderExpFor, SHOULDER_STEPS, DEFAULT_LOOK, FACES } from '../art/character.js';
 import { SKINS, HAIR_COLORS, HAIR_STYLES, CLOTH_COLORS, TOPS, BOTTOMS } from '../art/palette.js';
 import {
   PARTS, PART_FILTERS, EXERCISES, METHOD_COLS, DEMO_PREVIOUS, TITLES, GROWTH_PRESETS,
@@ -69,7 +69,7 @@ function growth() {
 }
 function stagesFromExp(exp) {
   const st = {};
-  for (const p of PARTS) st[p.id] = stageOf(p.id, levelOf(exp[p.id] || 0).lv);
+  for (const p of PARTS) st[p.id] = p.id === 'shoulder' ? shoulderStageFromExp(exp.shoulder || 0) : stageOf(p.id, levelOf(exp[p.id] || 0).lv);
   return st;
 }
 const myLook = (extra = {}) => ({ ...state.profile.look, stages: stagesFromExp(growth().exp), ...extra });
@@ -425,15 +425,15 @@ function safeLook(l) {
     bottomColor: pick(o.bottomColor, CLOTH_COLORS, 'charcoal'),
     face: pick(o.face, FACES, 'smile'),
     wristband: !!o.wristband,
-    stages: { chest: num(st.chest, 2), back: num(st.back, 2), shoulder: Math.round(num(st.shoulder, 12)), arm: num(st.arm, 2), leg: num(st.leg, 2), abs: num(st.abs, 2) },
+    stages: { chest: num(st.chest, 2), back: num(st.back, 2), shoulder: Math.round(num(st.shoulder, 20)), arm: num(st.arm, 2), leg: num(st.leg, 2), abs: num(st.abs, 2) },
   };
 }
 function bodyTags(look) {
   const st = (look && look.stages) || {};
-  const sh = Math.round(st.shoulder || 0) + 1;
-  const tags = [`肩Lv.${sh >= 13 ? '13+' : sh}`];
-  if (sh >= 10) tags.push('肩だけ異世界');
-  else if (sh >= 7) tags.push('横幅注意');
+  const sh = Math.round(st.shoulder || 0);
+  const tags = [`肩幅 ${sh}/20`];
+  if (sh >= 15) tags.push('肩だけ異世界');
+  else if (sh >= 9) tags.push('横幅注意');
   const big = ['chest', 'back', 'arm', 'leg'].filter((k) => (st[k] || 0) >= 1.6).length;
   if (big >= 2) tags.push('ムキムキ');
   return h('div', { style: 'display:flex;gap:4px;flex-wrap:wrap;margin-top:6px' }, ...tags.map((t, i) => h('span', { class: 'pill' + (i ? ' reward' : '') }, t)));
@@ -530,6 +530,12 @@ function renderGym() {
   function rotate() {
     const ids = candidates().map((m) => m.id);
     const next = [];
+    const meC = candidates().find((m) => m.me);
+    if (showMyBubble && meC) {
+      next.push(meC.id);
+      bag = bag.filter((x) => x !== meC.id);
+      if (!loading) showMyBubble = false;
+    }
     for (const pool of [() => bag, () => ids.filter((id) => !shown.includes(id)), () => ids]) {
       if (!bag.length) bag = ids.slice().sort(() => Math.random() - 0.5);
       for (const id of pool().slice()) {
@@ -568,16 +574,24 @@ function renderGym() {
   }
 
   // 本物の共有ジム: 表示中だけ45秒ごとに更新（常時接続はしない）
+  const localMine = () => store.listWorkouts().filter((w) => Date.now() - w.createdAt < 24 * 3600e3 && w.date >= store.ymd(new Date(Date.now() - 86400e3)))
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
   async function refresh() {
     if (!cloudMode) return;
     try {
       const rows = await cloud.gymNow();
+      const lm = localMine();
       members = rows.map((r) => ({
         id: r.workout_id, me: r.is_me, name: r.display_name, nameVisible: true, contentVisible: r.entries != null,
         title: titleName(r.title_id), recordedMinAgo: Math.max(0, Math.floor((Date.now() - Date.parse(r.recorded_at)) / 60000)),
-        comment: r.comment ? String(r.comment).slice(0, 40) : null, menu: r.entries ? menuOf(r.entries) : [], nice: r.nice_count, niced: r.niced,
+        comment: r.is_me && lm ? lm.comment || null : r.comment ? String(r.comment).slice(0, 40) : null, menu: r.entries ? menuOf(r.entries) : [], nice: r.nice_count, niced: r.niced,
         look: r.is_me ? myLook() : safeLook(r.look),
       }));
+      // サーバーにまだ届いていない自分の記録も、この端末では表示する
+      if (!members.some((m) => m.me) && state.privacy.join && lm) {
+        members.push({ id: 'me', me: true, name: state.profile.name, nameVisible: true, contentVisible: true, title: titleName(state.profile.title),
+          recordedMinAgo: Math.max(0, Math.floor((Date.now() - lm.createdAt) / 60000)), comment: lm.comment || null, menu: menuOf(lm.entries), nice: 0, look: myLook() });
+      }
       // 自分を先頭に（ページ1に必ず入れる）
       members.sort((a, b) => (b.me ? 1 : 0) - (a.me ? 1 : 0));
       loadError = '';
@@ -585,7 +599,7 @@ function renderGym() {
       loadError = e.message;
     }
     loading = false;
-    if (!members.some((m) => shown.includes(m.id))) rotate();
+    if (showMyBubble || !members.some((m) => shown.includes(m.id))) rotate();
     if (!sheetStack.length) drawStage();
   }
   rotate();
@@ -957,6 +971,7 @@ function openTrainingSheet({ editId } = {}) {
   const { body, foot } = trainingForm({ inSheet: true, editId, onSaved: () => { if (sh) sh.close(); route(); } });
   sh = openSheet({ title: editId ? '記録を編集' : 'トレーニングを記録', body, foot, full: !!editId });
 }
+let showMyBubble = false; // ひとこと投稿直後は自分の吹き出しを最初に出す
 // 記録ページ（トレーニング）へ。入力中にジムの絵が出ないよう、重ねて開かずにページを切り替える
 function goRecord() {
   state.recordTab = 'training';
@@ -986,10 +1001,12 @@ function openCommentSheet() {
       try {
         if (!state.privacy.join && joinBox.checked) { state.privacy.join = true; persist(); store.profileChanged(); }
         if (!store.postComment(text.value, today())) { err.textContent = '保存できませんでした'; return; }
-        sh.close();
-        toast('ひとことを投稿しました');
-        route();
-      } catch (e) { err.textContent = e.message; }
+      } catch (e) { err.textContent = e.message; return; }
+      sh.close();
+      showMyBubble = true;
+      toast('ひとことを投稿しました');
+      // ログイン中はサーバーに届いてから描き直す（届かなくても、自分の画面にはすぐ出す）
+      Promise.race([store.flush(), new Promise((r) => setTimeout(r, 4000))]).finally(() => route());
     } }, '投稿する'));
 }
 
@@ -1286,12 +1303,16 @@ function renderGrowth() {
       h('h2', { class: 'sec' }, '部位の成長', h('small', {}, '鍛えた分だけ、少しずつ変わる')),
       h('div', { class: 'parts' }, ...PARTS.map((p) => {
         const l = levelOf(gr.exp[p.id]);
-        const hot = p.id === 'shoulder' && shoulderLv >= 5;
+        const hot = p.id === 'shoulder' && shoulderStageFromExp(gr.exp.shoulder || 0) >= 3;
         return h('div', { class: 'part' + (hot ? ' hot' : '') },
           h('div', { class: 'h' }, h('b', {}, p.name), h('span', {}, `Lv.${l.lv}`)),
           h('div', { class: 'bar', role: 'progressbar', 'aria-label': `${p.name}の次のレベルまで`, 'aria-valuemin': 0, 'aria-valuemax': l.need, 'aria-valuenow': l.cur }, h('i', { style: `width:${Math.round((l.cur / l.need) * 100)}%` })),
           h('div', { class: 'n' }, `${l.cur} / ${l.need} EXP`),
-          hot ? h('div', { class: 'tag' }, shoulderLv >= 10 ? '肩だけ異世界' : '肩幅成長中') : null);
+          hot ? h('div', { class: 'tag' }, shoulderLv >= 10 ? '肩だけ異世界' : '肩幅成長中') : null,
+          p.id === 'shoulder' ? (() => {
+            const n = shoulderStageFromExp(gr.exp.shoulder || 0);
+            return h('div', { class: 'n', style: 'color:var(--reward)' }, n >= SHOULDER_STEPS ? `肩幅 ${n}/${SHOULDER_STEPS}（最大）` : `肩幅 ${n}/${SHOULDER_STEPS}・次まで ${shoulderExpFor(n + 1) - (gr.exp.shoulder || 0)}EXP`);
+          })() : null);
       })),
       h('h2', { class: 'sec' }, '解放'),
       h('ul', { class: 'unlock-list card', style: 'padding:4px 14px' },
@@ -1595,6 +1616,7 @@ async function afterLogin() {
       state.privacy = { join: prof.join_gym, name: prof.show_name, content: prof.show_content };
       state.onboarded = !!prof.onboarded_at;
       state.onboardedAt = prof.onboarded_at;
+      store.profileChanged(); // 体つき（成長段階）を最新の計算で送り直す
     } else if (state.onboarded) {
       store.profileChanged(); // ログインなしで作ったキャラをアカウントへ
     }
@@ -1668,11 +1690,15 @@ function exportBackup() {
 }
 
 // 画面上部の帯に同期の状態を出す（保存がサーバーで確定する前に「保存済み」と言わない）
+// 送信が遅れている・オフライン・食い違いがある時だけ、右上に小さく出す（保存済みの時は何も出さない）
 store.onSync((st) => {
-  const bar = document.querySelector('.demo-bar');
-  if (!bar) return;
-  if (!cloud.enabled || !cloud.user()) { bar.textContent = cloud.enabled ? 'ベータ版：ログインなし・記録はこの端末だけ' : 'ベータ版：記録はこの端末に保存・ジムの他の人は見本'; return; }
-  bar.textContent = 'ベータ版：' + syncLabel(st);
+  const pill = document.getElementById('sync-pill');
+  if (!pill) return;
+  const show = cloud.enabled && cloud.user() && (st.conflicts || st.pending || st.state === 'offline' || st.state === 'error');
+  pill.hidden = !show;
+  if (!show) return;
+  pill.textContent = st.conflicts ? `食い違い ${st.conflicts}` : st.state === 'offline' ? `オフライン・未送信 ${st.pending}` : st.state === 'syncing' ? '送信中…' : `未送信 ${st.pending}`;
+  pill.classList.toggle('warn', !!st.conflicts || st.state === 'error');
 });
 
 async function boot() {

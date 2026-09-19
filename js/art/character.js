@@ -6,18 +6,23 @@ import { Surface, Ell, Cap, Rows, Union, sphereNormal } from './raster.js';
 import { SKINS, HAIR_COLORS, CLOTH_COLORS, FIXED, clothRamp, mix, pickById } from './palette.js';
 import { hairParts } from './hair.js';
 
-// 肩はレベルが上がるたびに少しずつ広がる（依頼者指示で5段階→Lv1〜13の13段階）。
-// 段階 0〜12 を倍率へ。後半ほど大きく伸びるギャグ曲線。上限は約2.2倍
-export const SHOULDER_STEPS = 12;
+// 肩は肩のEXPで直接広がる（依頼者指示: 段階を増やし、早く大きくなるように）。
+// 段階 0〜20。段階 n に必要な肩EXP = 15n + 1.5n²（1段目は約17EXP＝1回のトレーニング、最大は900EXP）
+export const SHOULDER_STEPS = 20;
+export const shoulderExpFor = (n) => Math.round(15 * n + 1.5 * n * n);
+export function shoulderStageFromExp(exp) {
+  let n = 0;
+  while (n < SHOULDER_STEPS && exp >= shoulderExpFor(n + 1)) n++;
+  return n;
+}
 const SHOULDER_MAX = { detail: 2.2, gym: 2.2 }; // ジムでも肩の大きさが分かるよう詳細と同じ倍率（依頼者指示）
 export function shoulderMult(kind, stage) {
   const t = Math.max(0, Math.min(1, stage / SHOULDER_STEPS));
   return 1 + (SHOULDER_MAX[kind] - 1) * Math.pow(t, 1.35);
 }
 
-// 部位レベル → 見た目段階。肩は 0〜12 の整数、ほかの部位は 0〜2 の連続値（レベルごとに少しずつ変わる）
+// 部位レベル → 見た目段階（肩以外）。0〜2 の連続値でレベルごとに少しずつ変わる
 export function stageOf(part, lv) {
-  if (part === 'shoulder') return Math.min(SHOULDER_STEPS, Math.max(0, lv - 1));
   return Math.min(2, Math.round((Math.max(0, lv - 1) / 2.5) * 10) / 10);
 }
 

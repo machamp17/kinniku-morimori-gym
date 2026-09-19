@@ -312,3 +312,7 @@ body.sheet-open { overflow: hidden; overscroll-behavior: none; }
 body.typing .nav { display: none; }
 body.typing .sheet-foot[style*="sticky"] { bottom: 0 !important; }
 body.typing .view { padding-bottom: 16px; }
+
+/* 送信状態（問題がある時だけ表示） */
+.sync-pill { flex: none; font-size: 12px; color: var(--reward); border: 1px solid #6b5520; background: #2a2518; border-radius: 12px; padding: 2px 8px; text-decoration: none; white-space: nowrap; }
+.sync-pill.warn { color: var(--error); border-color: #7a3a3a; background: #2a1818; }

@@ -75,9 +75,9 @@ export function levelOf(exp) {
 
 // 見本の成長プリセット（部位EXP）
 export const GROWTH_PRESETS = {
-  early: { name: '初期', exp: { chest: 120, back: 60, shoulder: 150, leg: 40, arm: 80, abs: 20 }, days: 4 },
-  mid: { name: '中期', exp: { chest: 900, back: 650, shoulder: 1600, leg: 700, arm: 650, abs: 400 }, days: 26 },
-  max: { name: '肩幅最大', exp: { chest: 2300, back: 1900, shoulder: 7900, leg: 1700, arm: 1600, abs: 1600 }, days: 64 },
+  early: { name: '初期', exp: { chest: 120, back: 60, shoulder: 60, leg: 40, arm: 80, abs: 20 }, days: 4 },
+  mid: { name: '中期', exp: { chest: 900, back: 650, shoulder: 330, leg: 700, arm: 650, abs: 400 }, days: 26 },
+  max: { name: '肩幅最大', exp: { chest: 2300, back: 1900, shoulder: 900, leg: 1700, arm: 1600, abs: 1600 }, days: 64 },
 };
 
 /* ---------- 見本のジム参加者（架空） ---------- */
@@ -109,14 +109,14 @@ export function demoMembers(count) {
   const out = [];
   for (let i = 0; i < count; i++) {
     const type = r() < 0.5 ? 'male' : 'female';
-    const shoulder = i === 3 ? 12 : i === 9 ? 8 : Math.floor(r() * 7);
+    const shoulder = i === 3 ? 20 : i === 9 ? 13 : Math.floor(r() * 11);
     const lvl = Math.round(r() * 20) / 10;
     out.push({
       id: 'demo_' + i,
       name: NAMES[i % NAMES.length],
       nameVisible: r() > 0.2,
       contentVisible: r() > 0.25,
-      title: shoulder >= 9 ? '肩だけ異世界' : shoulder >= 6 ? '横幅注意' : pick(['はじめの一歩', 'コツコツ見習い', '習慣の達人']),
+      title: shoulder >= 15 ? '肩だけ異世界' : shoulder >= 9 ? '横幅注意' : pick(['はじめの一歩', 'コツコツ見習い', '習慣の達人']),
       recordedMinAgo: Math.floor(r() * 23 * 60),
       comment: COMMENTS[i % COMMENTS.length],
       menu: MENUS[i % MENUS.length],

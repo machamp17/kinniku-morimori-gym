@@ -10,8 +10,8 @@ const FEMALE = { ...DEFAULT_LOOK, type: 'female', hairStyle: 'pony', hairColor: 
 
 const STAGES = {
   初期: { chest: 0, back: 0, shoulder: 0, arm: 0, leg: 0, abs: 0 },
-  中期: { chest: 1, back: 1, shoulder: 5, arm: 1, leg: 1, abs: 1 },
-  肩幅最大: { chest: 2, back: 2, shoulder: 12, arm: 2, leg: 2, abs: 2 },
+  中期: { chest: 1, back: 1, shoulder: 10, arm: 1, leg: 1, abs: 1 },
+  肩幅最大: { chest: 2, back: 2, shoulder: 20, arm: 2, leg: 2, abs: 2 },
 };
 
 function cell(look, kind, label, cls) {
@@ -49,9 +49,9 @@ section('男女 × 成長段階（ジム 96px を 48 CSS px で表示・実寸�
     for (const [k, st] of Object.entries(STAGES)) row.appendChild(cell({ ...base, stages: st }, 'gym', `${name} ${k}`, gcls));
 });
 
-section('肩の成長（詳細・2レベルおき）', '肩はLv1〜13まで1レベルごとに少しずつ広がる。頭・顔・脚は拡大しない', (row) => {
+section('肩の成長（詳細・2レベルおき）', '肩は肩のEXPで20段階に広がる（約900EXPで最大）。頭・顔・脚は拡大しない', (row) => {
   for (const base of [MALE, FEMALE])
-    for (let i = 0; i <= 12; i += 2) row.appendChild(cell({ ...base, stages: { ...STAGES['初期'], shoulder: i } }, 'detail', `肩Lv${i + 1}`, dcls));
+    for (const i of [0, 3, 6, 10, 13, 16, 20]) row.appendChild(cell({ ...base, stages: { ...STAGES['初期'], shoulder: i } }, 'detail', `肩幅${i}/20`, dcls));
 });
 
 section(`表情${FACES.length}種`, '着せ替えの「表情」から選べる', (row) => {
