@@ -10,36 +10,8 @@ export const PARTS = [
 ];
 export const PART_FILTERS = [...PARTS, { id: 'cardio', name: '有酸素' }];
 
-// method: wr=重量×回数 bw=自重 assist=アシスト time=時間 cardio=有酸素
-export const EXERCISES = [
-  { id: 'ex_bench', name: 'ベンチプレス', part: 'chest', method: 'wr', alias: ['べんち', 'bench'] },
-  { id: 'ex_incline', name: 'インクラインプレス', part: 'chest', method: 'wr', alias: ['いんくらいん'] },
-  { id: 'ex_fly', name: 'ダンベルフライ', part: 'chest', method: 'wr', alias: ['ふらい'] },
-  { id: 'ex_pushup', name: '腕立て伏せ', part: 'chest', method: 'bw', alias: ['うでたて', 'プッシュアップ'] },
-  { id: 'ex_lat', name: 'ラットプルダウン', part: 'back', method: 'wr', alias: ['らっと'] },
-  { id: 'ex_row', name: 'ベントオーバーロウ', part: 'back', method: 'wr', alias: ['ろう'] },
-  { id: 'ex_chin', name: '懸垂', part: 'back', method: 'bw', alias: ['けんすい', 'チンニング'] },
-  { id: 'ex_achin', name: 'アシスト懸垂', part: 'back', method: 'assist', alias: ['あしすと'] },
-  { id: 'ex_spress', name: 'ショルダープレス', part: 'shoulder', method: 'wr', alias: ['しょるだー'] },
-  { id: 'ex_side', name: 'サイドレイズ', part: 'shoulder', method: 'wr', alias: ['さいど'] },
-  { id: 'ex_rear', name: 'リアレイズ', part: 'shoulder', method: 'wr', alias: ['りあ'] },
-  { id: 'ex_front', name: 'フロントレイズ', part: 'shoulder', method: 'wr', alias: ['ふろんと'] },
-  { id: 'ex_squat', name: 'スクワット', part: 'leg', method: 'wr', alias: ['すくわっと'] },
-  { id: 'ex_smith', name: 'スミスマシンスクワット', part: 'leg', method: 'wr', alias: ['すみす'] },
-  { id: 'ex_legpress', name: 'レッグプレス', part: 'leg', method: 'wr', alias: ['れっぐ'] },
-  { id: 'ex_lunge', name: 'ランジ', part: 'leg', method: 'bw', alias: ['らんじ'] },
-  { id: 'ex_curl', name: 'アームカール', part: 'arm', method: 'wr', alias: ['かーる'] },
-  { id: 'ex_pushdown', name: 'プレスダウン', part: 'arm', method: 'wr', alias: ['ぷれすだうん'] },
-  { id: 'ex_hammer', name: 'ハンマーカール', part: 'arm', method: 'wr', alias: ['はんまー'] },
-  { id: 'ex_dips', name: 'ディップス', part: 'arm', method: 'bw', alias: ['でぃっぷす'] },
-  { id: 'ex_crunch', name: 'クランチ', part: 'abs', method: 'bw', alias: ['くらんち', '腹筋'] },
-  { id: 'ex_plank', name: 'プランク', part: 'abs', method: 'time', alias: ['ぷらんく'] },
-  { id: 'ex_legraise', name: 'レッグレイズ', part: 'abs', method: 'bw', alias: ['れっぐれいず'] },
-  { id: 'ex_abroller', name: 'アブローラー', part: 'abs', method: 'bw', alias: ['あぶろーらー', '腹筋ローラー'] },
-  { id: 'ex_walk', name: 'ウォーキング', part: 'cardio', method: 'cardio', alias: ['あるく'] },
-  { id: 'ex_run', name: 'ランニング', part: 'cardio', method: 'cardio', alias: ['はしる'] },
-  { id: 'ex_bike', name: 'エアロバイク', part: 'cardio', method: 'cardio', alias: ['ばいく'] },
-];
+// 種目一覧は exercises.js（約170種目・器具ごと）
+export { EXERCISES, EQUIPMENT } from './exercises.js';
 
 export const METHOD_COLS = {
   wr: [{ k: 'kg', label: '重量', unit: 'kg', step: '0.5' }, { k: 'reps', label: '回数', unit: '回', step: '1' }],
@@ -56,13 +28,19 @@ export const DEMO_PREVIOUS = {
   ex_lat: { date: '9/15', sets: [{ kg: 45, reps: 12 }, { kg: 45, reps: 12 }, { kg: 45, reps: 10 }] },
 };
 
+// 称号。肩の称号は肩幅の段階（0〜60）で解放（依頼者指示）
 export const TITLES = [
-  { id: 't_first', name: 'はじめの一歩', cond: '最初から', unlocked: true },
-  { id: 't_3days', name: 'コツコツ見習い', cond: '記録日 3日', unlocked: true },
-  { id: 't_shoulder5', name: '肩幅成長中', cond: '肩 Lv5', unlocked: true },
-  { id: 't_shoulder7', name: '横幅注意', cond: '肩 Lv7', unlocked: false },
-  { id: 't_shoulder10', name: '肩だけ異世界', cond: '肩 Lv10', unlocked: false },
-  { id: 't_30days', name: '習慣の達人', cond: '記録日 30日', unlocked: false },
+  { id: 't_first', name: 'はじめの一歩', cond: '最初から' },
+  { id: 't_3days', name: 'コツコツ見習い', cond: '記録日 3日' },
+  { id: 't_shoulder5', name: '肩幅成長中', cond: '肩幅 3段階', shoulder: 3 },
+  { id: 't_shoulder7', name: '横幅注意', cond: '肩幅 9段階', shoulder: 9 },
+  { id: 't_shoulder10', name: '肩だけ異世界', cond: '肩幅 15段階', shoulder: 15 },
+  { id: 't_door', name: 'ドアに少し引っかかる', cond: '肩幅 22段階', shoulder: 22 },
+  { id: 't_shoulder_main', name: '肩が本体', cond: '肩幅 30段階', shoulder: 30 },
+  { id: 't_side_walk', name: '改札は横歩き', cond: '肩幅 40段階', shoulder: 40 },
+  { id: 't_horizon', name: '肩が地平線', cond: '肩幅 50段階', shoulder: 50 },
+  { id: 't_legend', name: '伝説の肩幅', cond: '肩幅 60段階（最大）', shoulder: 60 },
+  { id: 't_30days', name: '習慣の達人', cond: '記録日 30日' },
 ];
 
 // レベル: 累積必要EXP = 50 × (L-1) × L
@@ -77,7 +55,7 @@ export function levelOf(exp) {
 export const GROWTH_PRESETS = {
   early: { name: '初期', exp: { chest: 120, back: 60, shoulder: 60, leg: 40, arm: 80, abs: 20 }, days: 4 },
   mid: { name: '中期', exp: { chest: 900, back: 650, shoulder: 330, leg: 700, arm: 650, abs: 400 }, days: 26 },
-  max: { name: '肩幅最大', exp: { chest: 2300, back: 1900, shoulder: 900, leg: 1700, arm: 1600, abs: 1600 }, days: 64 },
+  max: { name: '肩幅最大', exp: { chest: 2300, back: 1900, shoulder: 6300, leg: 1700, arm: 1600, abs: 1600 }, days: 64 },
 };
 
 /* ---------- 見本のジム参加者（架空） ---------- */
@@ -109,14 +87,14 @@ export function demoMembers(count) {
   const out = [];
   for (let i = 0; i < count; i++) {
     const type = r() < 0.5 ? 'male' : 'female';
-    const shoulder = i === 3 ? 20 : i === 9 ? 13 : Math.floor(r() * 11);
+    const shoulder = i === 3 ? 42 : i === 9 ? 24 : i === 15 ? 16 : Math.floor(r() * 11);
     const lvl = Math.round(r() * 20) / 10;
     out.push({
       id: 'demo_' + i,
       name: NAMES[i % NAMES.length],
       nameVisible: r() > 0.2,
       contentVisible: r() > 0.25,
-      title: shoulder >= 15 ? '肩だけ異世界' : shoulder >= 9 ? '横幅注意' : pick(['はじめの一歩', 'コツコツ見習い', '習慣の達人']),
+      title: shoulder >= 40 ? '改札は横歩き' : shoulder >= 22 ? 'ドアに少し引っかかる' : shoulder >= 15 ? '肩だけ異世界' : shoulder >= 9 ? '横幅注意' : pick(['はじめの一歩', 'コツコツ見習い', '習慣の達人']),
       recordedMinAgo: Math.floor(r() * 23 * 60),
       comment: COMMENTS[i % COMMENTS.length],
       menu: MENUS[i % MENUS.length],

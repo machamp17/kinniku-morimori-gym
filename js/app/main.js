@@ -4,7 +4,7 @@
 import { characterCanvas, stageOf, shoulderStageFromExp, shoulderExpFor, SHOULDER_STEPS, DEFAULT_LOOK, FACES } from '../art/character.js';
 import { SKINS, HAIR_COLORS, HAIR_STYLES, CLOTH_COLORS, TOPS, BOTTOMS } from '../art/palette.js';
 import {
-  PARTS, PART_FILTERS, EXERCISES, METHOD_COLS, DEMO_PREVIOUS, TITLES, GROWTH_PRESETS,
+  PARTS, PART_FILTERS, EXERCISES, EQUIPMENT, METHOD_COLS, DEMO_PREVIOUS, TITLES, GROWTH_PRESETS,
   levelOf, demoMembers, agoLabel,
 } from './data.js';
 import { mountLogo } from './logo.js';
@@ -119,17 +119,16 @@ function fitSize(res, maxCss) {
   const k = Math.max(1, Math.floor((maxCss * dpr) / res));
   return (res * k) / dpr;
 }
-function charEl(look, kind = 'detail', { animate = true, label, fit } = {}) {
+// css: 表示の高さ（CSS px）。肩が大きい時は横に広い絵になるので、幅は絵の縦横比に合わせる
+function charEl(look, kind = 'detail', { animate = true, label, fit, css } = {}) {
   const c = h('canvas', { class: 'px', role: 'img', 'aria-label': label || 'キャラクター' });
-  if (fit) {
-    const s = fitSize(kind === 'gym' ? 96 : 192, fit) + 'px';
-    c.style.width = s;
-    c.style.height = s;
-  }
+  const baseH = fit ? fitSize(kind === 'gym' ? 96 : 192, fit) : css || (kind === 'gym' ? 48 : 192);
   const draw = (frame) => {
     const src = characterCanvas({ ...look, frame }, kind);
     c.width = src.width;
     c.height = src.height;
+    c.style.width = (baseH * src.width) / src.height + 'px';
+    c.style.height = 'auto';
     const ctx = c.getContext('2d');
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, c.width, c.height);
@@ -145,7 +144,7 @@ function headThumb(look) {
   const c = h('canvas', { class: 'px', width: 96, height: 96, 'aria-hidden': 'true' });
   const ctx = c.getContext('2d');
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(src, 48, 14, 96, 96, 0, 0, 96, 96);
+  ctx.drawImage(src, 48 + (src.width - src.height) / 2, 14, 96, 96, 0, 0, 96, 96);
   return c;
 }
 let tick = 0;
@@ -307,8 +306,8 @@ function renderOnboarding() {
     fill(wrap);
     window.scrollTo(0, 0);
     if (step === 0) wrap.append(h('div', { class: 'onb-hero' },
-      charEl({ ...DEFAULT_LOOK, ...typeDefaults('male'), type: 'male' }, 'gym', { label: '男性キャラクター' }),
-      charEl({ ...DEFAULT_LOOK, ...typeDefaults('female'), type: 'female' }, 'gym', { label: '女性キャラクター' }),
+      charEl({ ...DEFAULT_LOOK, ...typeDefaults('male'), type: 'male' }, 'gym', { label: '男性キャラクター', css: 96 }),
+      charEl({ ...DEFAULT_LOOK, ...typeDefaults('female'), type: 'female' }, 'gym', { label: '女性キャラクター', css: 96 }),
       (() => {
         const t = h('h1', {}, h('span', { class: 'logo-text' }, '筋肉モリモリジム'));
         setTimeout(() => mountLogo(t, { heightCss: 44 }), 0);
@@ -425,15 +424,15 @@ function safeLook(l) {
     bottomColor: pick(o.bottomColor, CLOTH_COLORS, 'charcoal'),
     face: pick(o.face, FACES, 'smile'),
     wristband: !!o.wristband,
-    stages: { chest: num(st.chest, 2), back: num(st.back, 2), shoulder: Math.round(num(st.shoulder, 20)), arm: num(st.arm, 2), leg: num(st.leg, 2), abs: num(st.abs, 2) },
+    stages: { chest: num(st.chest, 2), back: num(st.back, 2), shoulder: Math.round(num(st.shoulder, 60)), arm: num(st.arm, 2), leg: num(st.leg, 2), abs: num(st.abs, 2) },
   };
 }
 function bodyTags(look) {
   const st = (look && look.stages) || {};
   const sh = Math.round(st.shoulder || 0);
-  const tags = [`肩幅 ${sh}/20`];
-  if (sh >= 15) tags.push('肩だけ異世界');
-  else if (sh >= 9) tags.push('横幅注意');
+  const tags = [`肩幅 ${sh}/${SHOULDER_STEPS}`];
+  const t = TITLES.filter((x) => x.shoulder != null && sh >= x.shoulder).pop();
+  if (t && sh >= 9) tags.push(t.name);
   const big = ['chest', 'back', 'arm', 'leg'].filter((k) => (st[k] || 0) >= 1.6).length;
   if (big >= 2) tags.push('ムキムキ');
   return h('div', { style: 'display:flex;gap:4px;flex-wrap:wrap;margin-top:6px' }, ...tags.map((t, i) => h('span', { class: 'pill' + (i ? ' reward' : '') }, t)));
@@ -740,7 +739,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
     const dateIn = h('input', { class: 'in', type: 'date', id: 'tr-date', value: d.date, max: today(), onchange: (e) => { d.date = e.target.value; changed(); } });
     body.append(h('label', { class: 'field', for: 'tr-date', style: 'margin-bottom:10px' }, h('span', {}, '日付'), dateIn));
     body.append(h('div', { class: 'chips', role: 'group', 'aria-label': '部位で絞り込み', style: 'margin-bottom:10px' },
-      ...PART_FILTERS.map((p) => h('button', { 'aria-pressed': String(d.filter === p.id), onclick: () => { d.filter = p.id; searchOpen = true; changed(); draw(); } }, p.name))));
+      ...PART_FILTERS.concat([{ id: 'bwonly', name: '自重' }]).map((p) => h('button', { 'aria-pressed': String(d.filter === p.id), onclick: () => { d.filter = p.id; query = ''; searchOpen = true; changed(); draw(); } }, p.name))));
 
     d.entries.forEach((en) => body.append(entryCard(en)));
 
@@ -754,8 +753,22 @@ function trainingForm({ inSheet, editId, onSaved }) {
       function drawResults() {
         const nq = norm(query);
         const pool = EXERCISES.concat(store.customExercises());
-        const list = pool.filter((x) => (!nq ? x.part === d.filter : true) && (!nq || norm(x.name).includes(nq) || x.alias.some((a) => norm(a).includes(nq))));
-        fill(res, ...list.map((x) => h('li', {}, h('button', { onclick: () => addEntry(x) }, x.name, h('small', {}, (x.custom ? '自分・' : '') + PART_FILTERS.find((p) => p.id === x.part).name)))));
+        const inFilter = (x) => (d.filter === 'bwonly' ? x.method === 'bw' || x.method === 'time' || x.eq === 'bw' : x.part === d.filter);
+        const list = pool.filter((x) => (!nq ? inFilter(x) : true) && (!nq || norm(x.name).includes(nq) || x.alias.some((a) => norm(a).includes(nq))));
+        const partName = (x) => PART_FILTERS.find((p) => p.id === x.part).name;
+        // 器具ごとに見出しを付ける（自分の種目は先頭）
+        // 「自重」やキーワード検索の時は部位ごと、部位で絞った時は器具ごと
+        const byPart = d.filter === 'bwonly' || !!nq;
+        const groups = [{ id: 'mine', name: '自分の種目', items: list.filter((x) => x.custom) }].concat(byPart
+          ? PART_FILTERS.map((p) => ({ ...p, items: list.filter((x) => !x.custom && x.part === p.id) }))
+          : EQUIPMENT.map((e) => ({ ...e, items: list.filter((x) => !x.custom && x.eq === e.id) })));
+        const rows = [];
+        groups.filter((g) => g.items.length).forEach((g) => {
+          rows.push(h('li', { class: 'ex-group', 'aria-hidden': 'true' }, `${g.name}（${g.items.length}）`));
+          g.items.forEach((x) => rows.push(h('li', {}, h('button', { onclick: () => addEntry(x) }, x.name,
+            h('small', {}, byPart ? (EQUIPMENT.find((e) => e.id === x.eq) || {}).name || '' : x.method === 'time' ? '秒' : x.method === 'assist' ? '補助' : x.method === 'bw' ? '回数' : '')))));
+        });
+        fill(res, rows);
         if (!list.length) res.append(h('li', { class: 'muted small', style: 'padding:10px 12px' }, '見つかりません。下の「自分の種目を追加」から登録できます。'));
         drawAdd();
       }
@@ -769,7 +782,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
             query.trim() ? `＋「${query.trim().slice(0, 30)}」を自分の種目として追加` : '＋ 自分の種目を追加'));
           return;
         }
-        const def = { name: query.trim().slice(0, 30), part: d.filter, method: d.filter === 'cardio' ? 'cardio' : 'wr' };
+        const def = { name: query.trim().slice(0, 30), part: d.filter === 'bwonly' ? 'chest' : d.filter, method: d.filter === 'cardio' ? 'cardio' : d.filter === 'bwonly' ? 'bw' : 'wr' };
         const nameIn = h('input', { class: 'in', id: 'cx-name', maxlength: 30, value: def.name, placeholder: '例: ケーブルクロスオーバー', oninput: (e) => (def.name = e.target.value) });
         const err = h('p', { class: 'err', role: 'alert', style: 'margin:0' });
         const partChips = h('div', { class: 'chips' });
@@ -1308,7 +1321,7 @@ function renderGrowth() {
           h('div', { class: 'h' }, h('b', {}, p.name), h('span', {}, `Lv.${l.lv}`)),
           h('div', { class: 'bar', role: 'progressbar', 'aria-label': `${p.name}の次のレベルまで`, 'aria-valuemin': 0, 'aria-valuemax': l.need, 'aria-valuenow': l.cur }, h('i', { style: `width:${Math.round((l.cur / l.need) * 100)}%` })),
           h('div', { class: 'n' }, `${l.cur} / ${l.need} EXP`),
-          hot ? h('div', { class: 'tag' }, shoulderLv >= 10 ? '肩だけ異世界' : '肩幅成長中') : null,
+          hot ? h('div', { class: 'tag' }, (TITLES.filter((x) => x.shoulder != null && shoulderStageFromExp(gr.exp.shoulder || 0) >= x.shoulder).pop() || {}).name || '肩幅成長中') : null,
           p.id === 'shoulder' ? (() => {
             const n = shoulderStageFromExp(gr.exp.shoulder || 0);
             return h('div', { class: 'n', style: 'color:var(--reward)' }, n >= SHOULDER_STEPS ? `肩幅 ${n}/${SHOULDER_STEPS}（最大）` : `肩幅 ${n}/${SHOULDER_STEPS}・次まで ${shoulderExpFor(n + 1) - (gr.exp.shoulder || 0)}EXP`);
@@ -1362,8 +1375,8 @@ function dressPanel(look, onChange, { titles = true, titleState } = {}) {
           h('button', { class: 'opt', 'aria-pressed': String(!!look.wristband), disabled: !unlockedBand, onclick: () => set('wristband', true) }, 'リストバンド', unlockedBand ? null : h('br'), unlockedBand ? null : h('small', { class: 'muted' }, '記録日7日で解放'))));
     } else if (tab === 'title' && titleState) {
       panel.append(h('ul', { class: 'unlock-list', style: 'padding:0' }, ...TITLES.map((t) => {
-        const shLv = levelOf(gr.exp.shoulder).lv;
-        const ok = t.id === 't_first' || (t.id === 't_3days' && gr.days >= 3) || (t.id === 't_shoulder5' && shLv >= 5) || (t.id === 't_shoulder7' && shLv >= 7) || (t.id === 't_shoulder10' && shLv >= 10) || (t.id === 't_30days' && gr.days >= 30);
+        const shSt = shoulderStageFromExp(gr.exp.shoulder || 0);
+        const ok = t.id === 't_first' || (t.id === 't_3days' && gr.days >= 3) || (t.id === 't_30days' && gr.days >= 30) || (t.shoulder != null && shSt >= t.shoulder);
         return h('li', {}, h('span', {}, t.name, h('br'), h('small', { class: 'muted' }, ok ? '解放済み' : `解放条件: ${t.cond}`)),
           h('button', { class: 'btn ' + (titleState.id === t.id ? 'primary' : ''), disabled: !ok, 'aria-pressed': String(titleState.id === t.id), onclick: () => { titleState.id = t.id; onChange(); drawPanel(); } }, titleState.id === t.id ? '選択中' : '選ぶ'));
       })));
@@ -1510,8 +1523,8 @@ function renderAuth() {
   function draw(msg = '', bad = false) {
     fill(wrap);
     const hero = h('div', { class: 'onb-hero' },
-      charEl({ ...DEFAULT_LOOK, ...typeDefaults('male'), type: 'male' }, 'gym', { label: '男性キャラクター' }),
-      charEl({ ...DEFAULT_LOOK, ...typeDefaults('female'), type: 'female' }, 'gym', { label: '女性キャラクター' }),
+      charEl({ ...DEFAULT_LOOK, ...typeDefaults('male'), type: 'male' }, 'gym', { label: '男性キャラクター', css: 96 }),
+      charEl({ ...DEFAULT_LOOK, ...typeDefaults('female'), type: 'female' }, 'gym', { label: '女性キャラクター', css: 96 }),
       (() => { const t = h('h1', {}, h('span', { class: 'logo-text' }, '筋肉モリモリジム')); setTimeout(() => mountLogo(t, { heightCss: 44 }), 0); return t; })());
     const body = h('div', { class: 'pad stack' });
     const email = h('input', { class: 'in', id: 'au-mail', type: 'email', autocomplete: 'email', inputmode: 'email', placeholder: 'you@example.com', value: sentTo });

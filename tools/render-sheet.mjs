@@ -31,6 +31,8 @@ const presets = {
   gymfaces: () => [MALE, FEMALE].flatMap((b) => FACES.map((f) => [{ ...b, face: f.id }, 'gym'])),
   stages: () => [MALE, FEMALE].flatMap((b) => [ST0, ST1, ST2].map((s) => [{ ...b, stages: s }, 'detail'])),
   shoulders: () => [MALE, FEMALE].flatMap((b) => [0, 3, 6, 10, 13, 16, 20].map((i) => [{ ...b, stages: { ...ST0, shoulder: i } }, 'detail'])),
+  mega: () => [MALE, FEMALE].flatMap((b) => [20, 25, 30, 40, 50, 60].map((i) => [{ ...b, stages: { ...ST2, shoulder: i } }, 'detail'])),
+  megagym: () => [MALE, FEMALE].flatMap((b) => [0, 10, 20, 30, 45, 60].map((i) => [{ ...b, stages: { ...ST0, shoulder: i } }, 'gym'])),
   hair: () => [MALE, FEMALE].flatMap((b) => P.HAIR_STYLES.map((h) => [{ ...b, hairStyle: h.id }, 'detail'])),
   haircolor: () => P.HAIR_COLORS.map((c) => [{ ...FEMALE, hairStyle: 'bob', hairColor: c.id }, 'detail']),
   skins: () => [MALE, FEMALE].flatMap((b) => P.SKINS.map((s) => [{ ...b, skin: s.id }, 'detail'])),
@@ -50,7 +52,8 @@ const cols = Number(colsArg) || Math.min(items.length, 6);
 // CROP=x0,y0,x1,y1 （詳細192px基準の座標。ジムは半分にする）
 const crop = process.env.CROP ? process.env.CROP.split(',').map(Number) : null;
 const maxRes = Math.max(...items.map((i) => i.res));
-const cw = crop ? Math.round(((crop[2] - crop[0]) * maxRes) / 192) : maxRes;
+const maxW = Math.max(...items.map((i) => i.canvas.width));
+const cw = crop ? Math.round(((crop[2] - crop[0]) * maxRes) / 192) : maxW;
 const ch = crop ? Math.round(((crop[3] - crop[1]) * maxRes) / 192) : maxRes;
 const cellW = cw * scale + 8, cellH = ch * scale + 8;
 const rows = Math.ceil(items.length / cols);
@@ -60,14 +63,15 @@ const px = new Uint8Array(W * H * 4);
 for (let i = 0; i < W * H; i++) { px[i * 4] = 0x22; px[i * 4 + 1] = 0x26; px[i * 4 + 2] = 0x2b; px[i * 4 + 3] = 255; }
 items.forEach((it, k) => {
   const ox = (k % cols) * cellW + 4, oy = Math.floor(k / cols) * cellH + 4;
-  const d = it.canvas.data, R = it.res;
-  const k0x = crop ? Math.round((crop[0] * R) / 192) : 0, k0y = crop ? Math.round((crop[1] * R) / 192) : 0;
-  const ww = crop ? Math.round(((crop[2] - crop[0]) * R) / 192) : R, hh = crop ? Math.round(((crop[3] - crop[1]) * R) / 192) : R;
+  const d = it.canvas.data, R = it.res, CW = it.canvas.width, padPx = (CW - R) / 2;
+  const k0x = crop ? Math.round((crop[0] * R) / 192) + padPx : 0, k0y = crop ? Math.round((crop[1] * R) / 192) : 0;
+  const ww = crop ? Math.round(((crop[2] - crop[0]) * R) / 192) : CW, hh = crop ? Math.round(((crop[3] - crop[1]) * R) / 192) : R;
+  const cx0 = crop ? 0 : Math.floor(((maxW - CW) * scale) / 2);
   for (let y = 0; y < hh * scale; y++)
     for (let x = 0; x < ww * scale; x++) {
-      const si = ((k0y + Math.floor(y / scale)) * R + k0x + Math.floor(x / scale)) * 4;
+      const si = ((k0y + Math.floor(y / scale)) * CW + k0x + Math.floor(x / scale)) * 4;
       if (!d[si + 3]) continue;
-      const di = ((oy + y) * W + ox + x) * 4;
+      const di = ((oy + y) * W + ox + cx0 + x) * 4;
       px[di] = d[si]; px[di + 1] = d[si + 1]; px[di + 2] = d[si + 2];
     }
 });

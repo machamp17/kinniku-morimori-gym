@@ -111,11 +111,15 @@ export const sphereNormal = (cx, cy, r) => (x, y) => {
 
 /* ---------- 描画面 ---------- */
 export class Surface {
-  // res: 出力画素数（正方形）, s: 設計座標→画素 の倍率
-  constructor(res) {
+  // res: 高さの画素数（基準は正方形）, s: 設計座標→画素 の倍率
+  // pad: 左右に足す画素数（肩が大きすぎて基準の幅に収まらない時だけ横に広げる。頭や体は伸ばさない）
+  constructor(res, pad = 0) {
     this.res = res;
+    this.pad = pad;
+    this.w = res + pad * 2;
+    this.h = res;
     this.s = res / 192;
-    const n = res * res;
+    const n = this.w * this.h;
     this.col = new Array(n).fill(null);
     this.grp = new Array(n).fill(null);
     this.outer = new Array(n).fill(null);
@@ -131,7 +135,7 @@ export class Surface {
     return t ? [t.ox + (x - t.ox) / t.k, t.oy + (y - t.oy) / t.k] : [x, y];
   }
   idx(x, y) {
-    return x < 0 || y < 0 || x >= this.res || y >= this.res ? -1 : y * this.res + x;
+    return x < 0 || y < 0 || x >= this.w || y >= this.h ? -1 : y * this.w + x;
   }
   // shape を ramp で塗る
   // o.clip(x,y): 設計座標で false を返した所は塗らない
@@ -140,17 +144,17 @@ export class Surface {
   // o.noLine: 内側の線を付けない, o.lineWith: この group と接する所だけ線を付ける
   // o.hl: ハイライトを使うか（初期 true）
   paint(shape, ramp, group, o = {}) {
-    const s = this.s, R = this.res;
+    const s = this.s, W = this.w, pad = this.pad;
     const [ax, ay] = this.fwd(shape.bb[0], shape.bb[1]);
     const [bx, by] = this.fwd(shape.bb[2], shape.bb[3]);
-    const x0 = Math.max(0, Math.floor(ax * s) - 1), y0 = Math.max(0, Math.floor(ay * s) - 1);
-    const x1 = Math.min(R - 1, Math.ceil(bx * s) + 1), y1 = Math.min(R - 1, Math.ceil(by * s) + 1);
+    const x0 = Math.max(0, Math.floor(ax * s) + pad - 1), y0 = Math.max(0, Math.floor(ay * s) - 1);
+    const x1 = Math.min(W - 1, Math.ceil(bx * s) + pad + 1), y1 = Math.min(this.h - 1, Math.ceil(by * s) + 1);
     if (x1 < x0 || y1 < y0) return;
     const bw = x1 - x0 + 1;
     const ns = new Array(bw * (y1 - y0 + 1)).fill(null);
     for (let y = y0; y <= y1; y++)
       for (let x = x0; x <= x1; x++) {
-        const [dx, dy] = this.inv((x + 0.5) / s, (y + 0.5) / s);
+        const [dx, dy] = this.inv((x - pad + 0.5) / s, (y + 0.5) / s);
         if (o.clip && !o.clip(dx, dy)) continue;
         let n = shape.at(dx, dy);
         if (n && o.normal) n = o.normal(dx, dy);
@@ -189,7 +193,7 @@ export class Surface {
           }
           c = ramp[t];
         }
-        out.push([y * R + x, c]);
+        out.push([y * W + x, c]);
       }
     for (const [i, c] of out) {
       this.col[i] = c;
@@ -209,7 +213,7 @@ export class Surface {
   // 設計座標の点を画素へ
   P(dx, dy) {
     [dx, dy] = this.fwd(dx, dy);
-    return [Math.floor(dx * this.s), Math.floor(dy * this.s)];
+    return [Math.floor(dx * this.s) + this.pad, Math.floor(dy * this.s)];
   }
   // 文字列テンプレートを置く。'.' は透過、mirror で左右反転
   stamp(x0, y0, rows, map, mirror = false, any = false) {
@@ -226,21 +230,21 @@ export class Surface {
     const s = this.s;
     for (let i = 0; i < this.col.length; i++) {
       if (this.grp[i] !== group) continue;
-      const x = i % this.res, y = (i / this.res) | 0;
-      const [dx, dy] = this.inv((x + 0.5) / s, (y + 0.5) / s);
+      const x = i % this.w, y = (i / this.w) | 0;
+      const [dx, dy] = this.inv((x - this.pad + 0.5) / s, (y + 0.5) / s);
       if (cond(dx, dy, this.col[i])) this.col[i] = typeof c === 'function' ? c(this.col[i]) : c;
     }
   }
   // casters に属する画素の直下 depth 画素ぶん、group の画素を影色にする（前髪の落ち影など）
   // group / casters は group 名、名前の配列、または判定関数
   castShadow(group, casters, depth, shadeFn) {
-    const R = this.res;
+    const W = this.w, H = this.h;
     const as = (g) => (typeof g === 'function' ? g : Array.isArray(g) ? (x) => g.includes(x) : (x) => x === g);
     const isT = as(group), isC = as(casters);
     const hit = new Set();
-    for (let y = 0; y < R; y++)
-      for (let x = 0; x < R; x++) {
-        const i = y * R + x;
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
         if (!this.grp[i] || !isC(this.grp[i])) continue;
         for (let k = 1; k <= depth; k++) {
           const j = this.idx(x, y + k);
@@ -254,12 +258,12 @@ export class Surface {
   }
   // 外周の輪郭。thick=2 で2画素（縮小表示用）
   outline(thick = 1) {
-    const R = this.res;
+    const W = this.w, H = this.h;
     for (let pass = 0; pass < thick; pass++) {
       const add = [];
-      for (let y = 0; y < R; y++)
-        for (let x = 0; x < R; x++) {
-          const i = y * R + x;
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
           if (this.col[i]) continue;
           // 光の当たる左上側は少し明るい線（セレクティブアウトライン）、右下側は濃い線
           const nb = pass === 0 ? [[-1, 0], [0, -1], [1, 0], [0, 1]] : [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
@@ -281,12 +285,11 @@ export class Surface {
     }
   }
   toCanvas() {
-    const R = this.res;
-    const cv = typeof OffscreenCanvas !== 'undefined' && false ? new OffscreenCanvas(R, R) : document.createElement('canvas');
-    cv.width = R;
-    cv.height = R;
+    const cv = document.createElement('canvas');
+    cv.width = this.w;
+    cv.height = this.h;
     const ctx = cv.getContext('2d');
-    const img = ctx.createImageData(R, R);
+    const img = ctx.createImageData(this.w, this.h);
     for (let i = 0; i < this.col.length; i++) {
       const c = this.col[i];
       if (!c) continue;

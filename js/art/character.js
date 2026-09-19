@@ -6,19 +6,22 @@ import { Surface, Ell, Cap, Rows, Union, sphereNormal } from './raster.js';
 import { SKINS, HAIR_COLORS, CLOTH_COLORS, FIXED, clothRamp, mix, pickById } from './palette.js';
 import { hairParts } from './hair.js';
 
-// 肩は肩のEXPで直接広がる（依頼者指示: 段階を増やし、早く大きくなるように）。
-// 段階 0〜20。段階 n に必要な肩EXP = 15n + 1.5n²（1段目は約17EXP＝1回のトレーニング、最大は900EXP）
-export const SHOULDER_STEPS = 20;
+// 肩は肩のEXPで直接広がる（依頼者指示: 段階を増やし、早く大きく。極端に大きいのはギャグとしてOK）。
+// 段階 0〜60。段階 n に必要な肩EXP = 15n + 1.5n²（1段目は約17EXP、20段目は900EXP＝約2.2倍、
+// その先は1段ごとに0.14倍ずつ膨らみ、60段目（6300EXP）で約7.8倍）
+export const SHOULDER_STEPS = 60;
+const SHOULDER_NORMAL = 20;
 export const shoulderExpFor = (n) => Math.round(15 * n + 1.5 * n * n);
 export function shoulderStageFromExp(exp) {
   let n = 0;
   while (n < SHOULDER_STEPS && exp >= shoulderExpFor(n + 1)) n++;
   return n;
 }
-const SHOULDER_MAX = { detail: 2.2, gym: 2.2 }; // ジムでも肩の大きさが分かるよう詳細と同じ倍率（依頼者指示）
+// ジムでも肩の大きさが分かるよう、詳細とジムで同じ倍率
 export function shoulderMult(kind, stage) {
-  const t = Math.max(0, Math.min(1, stage / SHOULDER_STEPS));
-  return 1 + (SHOULDER_MAX[kind] - 1) * Math.pow(t, 1.35);
+  const st = Math.max(0, Math.min(SHOULDER_STEPS, stage));
+  const t = Math.min(1, st / SHOULDER_NORMAL);
+  return 1 + 1.2 * Math.pow(t, 1.35) + Math.max(0, st - SHOULDER_NORMAL) * 0.14;
 }
 
 // 部位レベル → 見た目段階（肩以外）。0〜2 の連続値でレベルごとに少しずつ変わる
@@ -57,7 +60,7 @@ function geometry(look, kind) {
   const mult = shoulderMult(kind, st.shoulder);
   g.mult = mult;
   g.dRx = Math.max(d0, ((W0 * mult) / 2 - g.topHW) / 1.55);
-  g.dRy = 6.4 + (g.dRx - d0) * 0.62;
+  g.dRy = Math.min(38, 6.4 + (g.dRx - d0) * 0.62); // 縦は上限あり（横にだけ極端に広がる）
   g.d0 = d0;
   g.jointX = g.topHW + g.dRx * 0.55;
   g.shoulderWidth = 2 * (g.jointX + g.dRx);
@@ -165,7 +168,8 @@ function drawFace(S, look, kind, skin, hair, bobPx) {
     H: mix(skin[3], '#f06a6a', E.blush || 0.36),
     L: mix(skin[2], '#d8505a', 0.5),
   };
-  const put = (x, y, rows, mirror) => S.stamp(mirror ? R - x - rows[0].length : x, y + bobPx, rows, map, mirror);
+  const P0 = S.pad; // 横に広げた分のずれ
+  const put = (x, y, rows, mirror) => S.stamp((mirror ? R - x - rows[0].length : x) + P0, y + bobPx, rows, map, mirror);
 
   // 目
   const eyeRows = (name) => {
@@ -197,21 +201,21 @@ function drawFace(S, look, kind, skin, hair, bobPx) {
   put(hx0, hy0, blush, true);
 
   // 鼻・口
-  if (detail) [[96, 66], [96, 67]].forEach(([x, y]) => S.dot(x, y + bobPx, skin[2]));
+  if (detail) [[96, 66], [96, 67]].forEach(([x, y]) => S.dot(x + P0, y + bobPx, skin[2]));
   const [mx, my, mr] = (detail ? MOUTH_D : MOUTH_G)[E.mouth] || (detail ? MOUTH_D : MOUTH_G).smile;
-  S.stamp(mx, my + bobPx, mr, map, false);
+  S.stamp(mx + P0, my + bobPx, mr, map, false);
 
   // おまけ（顔の外側に小さく）
   if (!detail) return;
   const any = true;
-  if (E.extra === 'sweat') S.stamp(113, 49 + bobPx, ['.S', 'SS', 'SS'], { S: '#bfefff' }, false, any);
+  if (E.extra === 'sweat') S.stamp(113 + P0, 49 + bobPx, ['.S', 'SS', 'SS'], { S: '#bfefff' }, false, any);
   if (E.extra === 'sparkle') {
-    S.stamp(62, 30 + bobPx, ['..Y..', '..Y..', 'YYWYY', '..Y..', '..Y..'], { Y: '#ffe07a', W: '#ffffff' }, false, any);
-    S.stamp(124, 38 + bobPx, ['.Y.', 'YWY', '.Y.'], { Y: '#ffe07a', W: '#ffffff' }, false, any);
+    S.stamp(62 + P0, 30 + bobPx, ['..Y..', '..Y..', 'YYWYY', '..Y..', '..Y..'], { Y: '#ffe07a', W: '#ffffff' }, false, any);
+    S.stamp(124 + P0, 38 + bobPx, ['.Y.', 'YWY', '.Y.'], { Y: '#ffe07a', W: '#ffffff' }, false, any);
   }
-  if (E.extra === 'shine') S.stamp(122, 44 + bobPx, ['Y...', '.Y.Y', '..Y.', '.Y.Y'], { Y: '#ffe07a' }, false, any);
+  if (E.extra === 'shine') S.stamp(122 + P0, 44 + bobPx, ['Y...', '.Y.Y', '..Y.', '.Y.Y'], { Y: '#ffe07a' }, false, any);
   if (E.extra === 'fire') {
-    S.stamp(122, 40 + bobPx, ['..F..', '.FFF.', 'FFOFF', 'FOOOF', '.FOF.'], { F: '#ff7a3d', O: '#ffd36b' }, false, any);
+    S.stamp(122 + P0, 40 + bobPx, ['..F..', '.FFF.', 'FFOFF', 'FOOOF', '.FOF.'], { F: '#ff7a3d', O: '#ffd36b' }, false, any);
   }
 }
 
@@ -226,8 +230,10 @@ export function drawCharacter(look, kind = 'detail') {
   look = Object.assign({}, DEFAULT_LOOK, look);
   const res = kind === 'gym' ? 96 : 192;
   const detail = kind === 'detail';
-  const S = new Surface(res);
   const g = geometry(look, kind);
+  const half = Math.max(g.jointX + g.dRx, g.jointX + 5.6 + g.armR + 6) + 3; // 中心から一番外まで（設計座標）
+  const pad = half > 95 ? Math.ceil(((half - 95) * res) / 192 / 2) * 2 : 0;
+  const S = new Surface(res, pad);
   const st = g.st;
   const fem = g.fem;
   const bobPx = look.frame ? 1 : 0;
@@ -425,8 +431,11 @@ export function drawCharacter(look, kind = 'detail') {
     S.stamp(lx0, ly0, ['LL....LL', 'LLLLLLLL', 'LL....LL'], { L: lc });
   }
 
+  /* 首（肩より先に描く: 巨大な肩の上に首が浮かないように） */
+  S.paint(Cap(cx, 72 + b, cx, 84 + b, 6.2 + st.back * 0.5 - (fem ? 0.6 : 0), 6.8 + st.back * 0.7 - (fem ? 0.6 : 0)), skin, 'neck', { bias: -0.2, hl: false });
+
   /* 腕（少し外へ開き、軽く握った手） */
-  const jY = 91 + b - (g.dRx - 8) * 0.18;
+  const jY = Math.max(84, 91 - (g.dRx - 8) * 0.18) + b;
   const arms = [];
   for (const s of [-1, 1]) {
     const jx = cx + s * g.jointX;
@@ -474,9 +483,6 @@ export function drawCharacter(look, kind = 'detail') {
       S.castShadow(grp, 'sleeve' + s, detail ? 2 : 1, darker(skin));
     }
   }
-
-  /* 首 */
-  S.paint(Cap(cx, 72 + b, cx, 84 + b, 6.2 + st.back * 0.5 - (fem ? 0.6 : 0), 6.8 + st.back * 0.7 - (fem ? 0.6 : 0)), skin, 'neck', { bias: -0.2, hl: false });
 
   /* 頭 */
   S.xf = headXf;
