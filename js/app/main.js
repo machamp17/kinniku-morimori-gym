@@ -9,6 +9,7 @@ import {
 } from './data.js';
 import { mountLogo } from './logo.js';
 import * as store from './store.js';
+import * as cloud from './cloud.js';
 
 /* ---------- 状態 ---------- */
 const KEY = 'kmg2.demo.state';
@@ -244,16 +245,21 @@ const routes = {
   '/growth': renderGrowth,
   '/settings': renderSettings,
   '/settings/character': renderCharacterSettings,
+  '/auth': renderAuth,
+  '/auth/reset': renderPasswordReset,
 };
 let cleanup = [];
 function route() {
   let path = location.hash.replace(/^#/, '') || '/gym';
-  if (!state.onboarded && path !== '/onboarding') path = '/onboarding';
+  const needLogin = cloud.enabled && !cloud.user() && !state.localOnly;
+  if (needLogin && !path.startsWith('/auth')) path = '/auth';
+  else if (!needLogin && path === '/auth') path = '/gym';
+  else if (!path.startsWith('/auth') && !state.onboarded && path !== '/onboarding') path = '/onboarding';
   if (!routes[path]) path = '/gym';
   cleanup.forEach((f) => f());
   cleanup = [];
   sheetStack.slice().forEach((s) => s.close());
-  const onb = path === '/onboarding';
+  const onb = path === '/onboarding' || path.startsWith('/auth');
   $('#top').hidden = onb;
   $('#nav').hidden = onb;
   const tab = path.split('/')[1];
@@ -338,7 +344,9 @@ function renderOnboarding() {
         state.profile.look = draft.look;
         state.privacy = draft.privacy;
         state.onboarded = true;
+        state.onboardedAt = state.onboardedAt || new Date().toISOString();
         persist();
+        store.profileChanged();
         location.hash = '#/gym';
       };
     }
@@ -388,44 +396,86 @@ const SLOT_ORDER = [9, 2, 15, 6, 17, 0, 11, 13, 4, 19, 7, 1, 14, 10, 5, 18, 3, 1
 const posOf = (i) => SLOTS[SLOT_ORDER[i]];
 const POSTERS = [['昨日の自分を', '超えよう'], ['続けた分だけ、', '強くなる'], ['休むことも、', 'トレーニング']];
 
+// 他人から届いた見た目は信用せず、知っている項目・範囲だけ使う
+function safeLook(l) {
+  const o = l && typeof l === 'object' ? l : {};
+  const pick = (v, list, def) => (list.some((x) => x.id === v) ? v : def);
+  const num = (v, max) => Math.max(0, Math.min(max, Number(v) || 0));
+  const st = o.stages || {};
+  return {
+    type: o.type === 'female' ? 'female' : 'male',
+    hairStyle: pick(o.hairStyle, HAIR_STYLES, 'short'),
+    hairColor: pick(o.hairColor, HAIR_COLORS, 'darkbrown'),
+    skin: pick(o.skin, SKINS, 'skin2'),
+    top: pick(o.top, TOPS, 'tank'),
+    topColor: pick(o.topColor, CLOTH_COLORS, 'black'),
+    bottom: pick(o.bottom, BOTTOMS, 'shorts'),
+    bottomColor: pick(o.bottomColor, CLOTH_COLORS, 'charcoal'),
+    face: pick(o.face, FACES, 'smile'),
+    wristband: !!o.wristband,
+    stages: { chest: num(st.chest, 2), back: num(st.back, 2), shoulder: Math.round(num(st.shoulder, 12)), arm: num(st.arm, 2), leg: num(st.leg, 2), abs: num(st.abs, 2) },
+  };
+}
+const menuOf = (entries) => (Array.isArray(entries) ? entries : []).map((en) => {
+  const ex = EXERCISES.find((x) => x.id === en.exId);
+  return ex ? [PART_FILTERS.find((q) => q.id === ex.part).name, ex.name, setsSummary(ex, Array.isArray(en.sets) ? en.sets : [])] : null;
+}).filter(Boolean);
+
 function renderGym() {
-  const members = demoMembers(state.demo.members);
-  // 自分: 公開ONで、直近24時間に保存した記録（当日か前日の分）がある時だけ表示
-  const mine = store.listWorkouts().filter((w) => Date.now() - w.createdAt < 24 * 3600e3 && w.date >= store.ymd(new Date(Date.now() - 86400e3)))
-    .sort((a, b) => b.createdAt - a.createdAt)[0];
-  if (state.privacy.join && mine) {
-    members.unshift({
-      id: 'me', me: true, name: state.profile.name, nameVisible: state.privacy.name, contentVisible: state.privacy.content,
-      title: titleName(state.profile.title), recordedMinAgo: Math.floor((Date.now() - mine.createdAt) / 60000), comment: mine.comment || null,
-      menu: mine.entries.map((en) => { const ex = EXERCISES.find((x) => x.id === en.exId); return [PART_FILTERS.find((q) => q.id === ex.part).name, ex.name, setsSummary(ex, en.sets)]; }), nice: 0,
-      look: myLook(),
-    });
+  const cloudMode = cloud.enabled && !!cloud.user();
+  let members = [];
+  let loading = cloudMode;
+  let loadError = '';
+  let mine = null;
+  if (!cloudMode) {
+    // ログインなし: 見本（架空）の人と、この端末の自分
+    members = demoMembers(state.demo.members);
+    mine = store.listWorkouts().filter((w) => Date.now() - w.createdAt < 24 * 3600e3 && w.date >= store.ymd(new Date(Date.now() - 86400e3)))
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (state.privacy.join && mine) {
+      members.unshift({
+        id: 'me', me: true, name: state.profile.name, nameVisible: state.privacy.name, contentVisible: state.privacy.content,
+        title: titleName(state.profile.title), recordedMinAgo: Math.floor((Date.now() - mine.createdAt) / 60000), comment: mine.comment || null,
+        menu: menuOf(mine.entries), nice: 0, look: myLook(),
+      });
+    }
   }
   let page = 0;
-  const pages = Math.max(1, Math.ceil(members.length / 20));
+  const pages = () => Math.max(1, Math.ceil(members.length / 20));
   let selected = null;
 
+  const countEl = h('strong', {}, String(members.length));
   const head = h('div', { class: 'gym-head' },
     h('b', {}, '今日のジム'),
-    h('span', { class: 'count' }, '直近24時間・公開中 ', h('strong', {}, String(members.length)), ' 人'));
+    h('span', { class: 'count' }, '直近24時間・公開中 ', countEl, ' 人'));
   const stage = h('div', { class: 'gym-stage' });
   const info = h('div', { class: 'gym-info' });
+  const note = h('p', { class: 'muted small', style: 'padding:0 16px;margin:0' });
   const cta = h('div', { class: 'gym-cta' }, h('button', { class: 'btn primary lg block', onclick: () => openTrainingSheet() }, 'トレーニングを記録'));
-  view.append(head, stage, info, cta);
+  view.append(head, stage, info, note, cta);
 
   let bubbleTimer = 0;
   let bag = [];
   let shown = [];
   function pageMembers() { return members.slice(page * 20, page * 20 + 20); }
 
+  function drawNote() {
+    const meShown = members.some((m) => m.me);
+    note.textContent = !state.privacy.join
+      ? 'あなたは非公開です（ジムには表示されません）。設定の公開設定で変更できます。'
+      : !meShown ? '記録を保存すると、24時間あなたがジムに表示されます。' : '';
+    if (!cloudMode) note.textContent += ' ほかの人は見本（架空）です。ログインすると本物の共有ジムになります。';
+  }
   function drawStage() {
+    countEl.textContent = loading ? '…' : String(members.length);
+    if (page >= pages()) page = pages() - 1;
     stage.replaceChildren();
     // ポスター（読めるテキストとして配置）
     [31.3, 44.2, 57.1].forEach((x, i) => stage.append(h('div', { class: 'poster', style: `left:${x}%` }, POSTERS[i].join(''))));
     const list = pageMembers();
-    if (!list.length) {
-      stage.append(h('div', { class: 'empty gym-empty' }, h('b', {}, 'まだ誰もいません'), '記録を保存して公開すると、ここに表示されます。'));
-    }
+    if (loading) stage.append(h('div', { class: 'empty gym-empty' }, h('b', {}, '読み込み中…')));
+    else if (loadError) stage.append(h('div', { class: 'empty gym-empty' }, h('b', {}, '読み込めませんでした'), loadError, h('br'), h('button', { class: 'btn', style: 'margin-top:8px', onclick: refresh }, 'もう一度')));
+    else if (!list.length) stage.append(h('div', { class: 'empty gym-empty' }, h('b', {}, 'まだ誰もいません'), '記録を保存して公開すると、ここに表示されます。'));
     // 奥（上）の人から置き、手前の人が前に重なるようにする
     list.map((m, i) => [m, posOf(i)]).sort((a, b) => a[1][1] - b[1][1]).forEach(([m, [x, y]]) => {
       const label = `${m.nameVisible ? m.name : 'トレーニー'}、${m.title}、${agoLabel(m.recordedMinAgo)}`;
@@ -437,11 +487,12 @@ function renderGym() {
     info.replaceChildren(
       h('span', {}, reduceMotion() ? '吹き出しは手動で切替' : '吹き出しは20秒ごとに交代'),
       reduceMotion() && candidates().length > 3 ? h('button', { class: 'btn', style: 'min-height:36px', onclick: () => { rotate(); } }, '次の吹き出し') : null,
-      pages > 1 ? h('div', { class: 'pager' },
+      pages() > 1 ? h('div', { class: 'pager' },
         h('button', { class: 'btn', 'aria-label': '前のページ', disabled: page === 0, onclick: () => { page--; bag = []; rotate(); drawStage(); } }, '‹'),
-        h('span', {}, `${page + 1} / ${pages}`),
-        h('button', { class: 'btn', 'aria-label': '次のページ', disabled: page === pages - 1, onclick: () => { page++; bag = []; rotate(); drawStage(); } }, '›')) : null,
+        h('span', {}, `${page + 1} / ${pages()}`),
+        h('button', { class: 'btn', 'aria-label': '次のページ', disabled: page === pages() - 1, onclick: () => { page++; bag = []; rotate(); drawStage(); } }, '›')) : null,
     );
+    drawNote();
   }
   const candidates = () => pageMembers().filter((m) => m.comment);
   // 同時に3人まで（依頼者指示）。吹き出し同士が重ならない位置の人だけを組み合わせる。
@@ -455,7 +506,6 @@ function renderGym() {
   function rotate() {
     const ids = candidates().map((m) => m.id);
     const next = [];
-    // まだ出ていない人を優先し、足りなければ残りから
     for (const pool of [() => bag, () => ids.filter((id) => !shown.includes(id)), () => ids]) {
       if (!bag.length) bag = ids.slice().sort(() => Math.random() - 0.5);
       for (const id of pool().slice()) {
@@ -480,6 +530,7 @@ function renderGym() {
       const [x, y] = posOf(i);
       const top = `calc(${y}% - 52px)`;
       stage.append(h('div', { class: 'bubble-tail', style: `left:${x}%;top:${top}` }));
+      // 利用者の入力は textContent で入れる（HTMLとして実行しない）
       stage.append(h('div', { class: 'bubble', style: `left:clamp(70px, ${x}%, calc(100% - 70px));top:calc(${top} - 2px)` }, list[i].comment));
     });
   }
@@ -491,18 +542,70 @@ function renderGym() {
       rotate();
     }, 20000);
   }
+
+  // 本物の共有ジム: 表示中だけ45秒ごとに更新（常時接続はしない）
+  async function refresh() {
+    if (!cloudMode) return;
+    try {
+      const rows = await cloud.gymNow();
+      members = rows.map((r) => ({
+        id: r.workout_id, me: r.is_me, name: r.display_name, nameVisible: true, contentVisible: r.entries != null,
+        title: titleName(r.title_id), recordedMinAgo: Math.max(0, Math.floor((Date.now() - Date.parse(r.recorded_at)) / 60000)),
+        comment: r.comment ? String(r.comment).slice(0, 40) : null, menu: r.entries ? menuOf(r.entries) : [], nice: r.nice_count, niced: r.niced,
+        look: safeLook(r.look),
+      }));
+      // 自分を先頭に（ページ1に必ず入れる）
+      members.sort((a, b) => (b.me ? 1 : 0) - (a.me ? 1 : 0));
+      loadError = '';
+    } catch (e) {
+      loadError = e.message;
+    }
+    loading = false;
+    if (!members.some((m) => shown.includes(m.id))) rotate();
+    if (!sheetStack.length) drawStage();
+  }
   rotate();
   drawStage();
   schedule();
+  if (cloudMode) {
+    refresh();
+    const iv = setInterval(() => { if (!document.hidden && !sheetStack.length) refresh(); }, 45000);
+    cleanup.push(() => clearInterval(iv));
+  }
   cleanup.push(() => clearInterval(bubbleTimer));
 
   function openMember(m) {
     let tab = 'comment';
+    let busy = false;
     const body = h('div', { class: 'sheet-body' });
     const sh = openSheet({ title: m.nameVisible ? m.name : 'トレーニー', body, expandable: false, onClose: () => { selected = null; drawStage(); } });
     sh.sheet.style.height = 'auto';
     sh.sheet.style.maxHeight = '80dvh';
-    let niced = false;
+    async function nice() {
+      if (!cloudMode) { m.niced = !m.niced; m.nice += m.niced ? 1 : -1; draw(); return; }
+      if (busy) return;
+      busy = true;
+      try {
+        const r = await cloud.toggleNice(m.id);
+        m.niced = r.niced;
+        m.nice = r.nice_count;
+      } catch (e) { toast(e.message, true); }
+      busy = false;
+      draw();
+    }
+    async function hide() {
+      if (!cloudMode) { toast('見本の人は非表示にできません'); return; }
+      const ok = await confirmDialog('非表示にする', 'この人をあなたのジムに表示しないようにします（相手には通知されません）。', [{ label: 'やめる', value: null }, { label: '非表示にする', value: true, primary: true }]);
+      if (!ok) return;
+      try { await cloud.block(m.id); sh.close(); toast('非表示にしました'); refresh(); } catch (e) { toast(e.message, true); }
+    }
+    async function doReport() {
+      if (!cloudMode) { toast('見本の人は通報できません'); return; }
+      const reason = await confirmDialog('通報する', '不快・不適切な内容として運営に知らせます。理由を選んでください。', [
+        { label: 'やめる', value: null }, { label: 'ひとことが不適切', value: 'comment' }, { label: '名前が不適切', value: 'name' }, { label: 'その他', value: 'other', primary: true }]);
+      if (!reason) return;
+      try { await cloud.report(m.id, reason); toast('通報しました。運営が確認します'); } catch (e) { toast(e.message, true); }
+    }
     function draw() {
       body.replaceChildren(
         h('div', { class: 'member' },
@@ -516,25 +619,21 @@ function renderGym() {
           h('button', { role: 'tab', 'aria-selected': String(tab === 'training'), onclick: () => { tab = 'training'; draw(); } }, 'トレーニング')),
         tab === 'comment'
           ? h('div', { class: 'card' }, m.comment ? m.comment : h('span', { class: 'muted' }, 'ひとことはありません'))
-          : m.contentVisible
+          : m.contentVisible && m.menu.length
             ? h('ul', { class: 'menu-list card', style: 'padding:4px 14px' }, ...m.menu.map(([p, n, s]) => h('li', {}, h('b', {}, p), h('span', {}, n, h('br'), h('span', { class: 'muted small' }, s)))))
             : h('div', { class: 'card muted' }, '内容は非公開'),
         m.me
           ? h('p', { class: 'muted small' }, '自分の記録にはナイスセットできません')
           : h('div', { style: 'display:flex;gap:8px;align-items:center;margin-top:12px' },
-            h('button', { class: 'btn ' + (niced ? 'primary' : ''), style: 'flex:1', 'aria-pressed': String(niced), onclick: () => { niced = !niced; draw(); } }, niced ? 'ナイスセット済み（取り消す）' : 'ナイスセット'),
-            h('span', { class: 'muted', 'aria-label': 'ナイスセット数' }, String(m.nice + (niced ? 1 : 0)))),
+            h('button', { class: 'btn ' + (m.niced ? 'primary' : ''), style: 'flex:1', 'aria-pressed': String(!!m.niced), disabled: busy, onclick: nice }, m.niced ? 'ナイスセット済み（取り消す）' : 'ナイスセット'),
+            h('span', { class: 'muted', 'aria-label': 'ナイスセット数' }, String(m.nice || 0))),
         m.me ? null : h('div', { style: 'display:flex;gap:8px;margin-top:8px' },
-          h('button', { class: 'btn ghost', style: 'flex:1', onclick: () => toast('見本のため非表示は保存されません（Phase 3）') }, '非表示'),
-          h('button', { class: 'btn ghost', style: 'flex:1', onclick: () => toast('見本のため通報は送信されません（Phase 3）') }, '通報')),
+          h('button', { class: 'btn ghost', style: 'flex:1', onclick: hide }, '非表示'),
+          h('button', { class: 'btn ghost', style: 'flex:1', onclick: doReport }, '通報')),
       );
     }
     draw();
   }
-  info.after(h('p', { class: 'muted small', style: 'padding:0 16px;margin:0' },
-    !state.privacy.join ? 'あなたは非公開です（ジムには表示されません）。設定の公開設定で変更できます。'
-      : !mine ? '記録を保存すると、24時間あなたがジムに表示されます。' : '',
-    ' ほかの人は見本（架空）です。本物の共有ジムは今後作ります。'));
 }
 
 /* ============================================================
@@ -785,6 +884,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
       status.textContent = '';
       draw();
     }
+    store.profileChanged();
     if (onSaved) onSaved(saved);
   };
 
@@ -1176,6 +1276,7 @@ function openDressSheet() {
     state.profile.look = { ...look };
     state.profile.title = titleState.id;
     if (!persist()) return;
+    store.profileChanged();
     dirty = false;
     sh.close('applied');
     toast('着せ替えを保存しました（この端末）');
@@ -1193,11 +1294,11 @@ function renderSettings() {
   view.append(h('div', { class: 'pad stack' },
     h('div', { class: 'list' },
       h('a', { href: '#/settings/character' }, h('span', {}, 'キャラクター設定'), h('span', { class: 'v' }, `タイプ: ${state.profile.look.type === 'female' ? '女性' : '男性'} ›`)),
-      h('div', {}, h('span', {}, 'アカウント'), h('span', { class: 'v' }, 'ベータ版はログインなし'))),
-    h('h2', { class: 'sec' }, '記録のデータ', h('small', {}, 'この端末のブラウザだけに保存')),
+      ...accountRows()),
+    h('h2', { class: 'sec' }, '記録のデータ', h('small', {}, cloud.user() ? 'クラウドに保存（この端末にも控え）' : 'この端末のブラウザだけに保存')),
     dataCard(),
     h('h2', { class: 'sec' }, '共有ジムの公開', h('small', {}, '初期は非公開')),
-    privacyToggles(p, persist),
+    privacyToggles(p, () => { persist(); store.profileChanged(); }),
     h('h2', { class: 'sec' }, '表示'),
     h('div', { class: 'card', style: 'padding:4px 14px' }, (() => {
       const inp = h('input', { type: 'checkbox', id: 'rm', role: 'switch' });
@@ -1233,7 +1334,7 @@ function dataCard() {
   } });
   return h('div', { class: 'card stack' },
     h('p', { class: 'small', style: 'margin:0' }, `トレーニング ${st.workouts} 件 ／ からだ記録 ${st.bodyDays} 日 ／ 約 ${Math.max(1, Math.round(st.bytes / 1024))} KB`),
-    h('p', { class: 'small muted', style: 'margin:0' }, '機種変更やブラウザのデータ削除で消えます。ときどき書き出して保管してください。'),
+    h('p', { class: 'small muted', style: 'margin:0' }, cloud.user() ? 'ログインすれば別の端末でも同じ記録が見られます。念のため、ときどき書き出して保管してください。' : '機種変更やブラウザのデータ削除で消えます。ときどき書き出して保管してください。'),
     h('button', { class: 'btn block', onclick: () => {
       const blob = new Blob([store.exportData({ name: state.profile.name, look: state.profile.look, title: state.profile.title })], { type: 'application/json' });
       const a = h('a', { href: URL.createObjectURL(blob), download: `kinniku-morimori-${today()}.json` });
@@ -1271,6 +1372,7 @@ function renderCharacterSettings() {
         if (!ok) return;
         state.profile.look.type = next;
         persist();
+        store.profileChanged();
         toast('タイプを変更しました');
         location.hash = '#/growth';
       } }, '変更する'),
@@ -1279,4 +1381,216 @@ function renderCharacterSettings() {
   draw();
 }
 
-route();
+/* ============================================================
+ * ログイン（Supabase Auth）
+ * ============================================================ */
+function renderAuth() {
+  let mode = 'signup'; // signup | login | forgot | sent
+  let sentTo = '';
+  const wrap = h('div', { class: 'onb' });
+  view.append(wrap);
+  function draw(msg = '', bad = false) {
+    wrap.replaceChildren();
+    const hero = h('div', { class: 'onb-hero' },
+      charEl({ ...DEFAULT_LOOK, ...typeDefaults('male'), type: 'male' }, 'gym', { label: '男性キャラクター' }),
+      charEl({ ...DEFAULT_LOOK, ...typeDefaults('female'), type: 'female' }, 'gym', { label: '女性キャラクター' }),
+      (() => { const t = h('h1', {}, h('span', { class: 'logo-text' }, '筋肉モリモリジム')); setTimeout(() => mountLogo(t, { heightCss: 44 }), 0); return t; })());
+    const body = h('div', { class: 'pad stack' });
+    const email = h('input', { class: 'in', id: 'au-mail', type: 'email', autocomplete: 'email', inputmode: 'email', placeholder: 'you@example.com', value: sentTo });
+    const pw = h('input', { class: 'in', id: 'au-pw', type: 'password', autocomplete: mode === 'signup' ? 'new-password' : 'current-password', placeholder: '8文字以上' });
+    const note = h('p', { class: bad ? 'err' : 'small muted', role: bad ? 'alert' : 'status', style: 'margin:0' }, msg);
+    const btn = h('button', { class: 'btn primary lg block' });
+    const run = async (fn) => {
+      btn.disabled = true;
+      try { await fn(); } catch (e) { draw(e.message, true); } finally { btn.disabled = false; }
+    };
+    if (mode === 'sent') {
+      body.append(h('h2', { class: 'sec' }, '確認メールを送りました'),
+        h('p', { style: 'margin:0' }, `${sentTo} に届いたメールのリンクを開くと登録が完了します。届かない時は迷惑メールフォルダも確認してください。`),
+        note,
+        h('button', { class: 'btn block', onclick: () => run(async () => { await cloud.resendConfirm(sentTo); draw('もう一度送りました'); }) }, '確認メールを再送'),
+        h('button', { class: 'btn ghost block', onclick: () => { mode = 'login'; draw(); } }, 'ログイン画面へ'));
+      wrap.append(hero, body);
+      return;
+    }
+    body.append(h('div', { class: 'seg', role: 'tablist' },
+      h('button', { role: 'tab', 'aria-selected': String(mode === 'signup'), onclick: () => { mode = 'signup'; draw(); } }, 'はじめる'),
+      h('button', { role: 'tab', 'aria-selected': String(mode === 'login' || mode === 'forgot'), onclick: () => { mode = 'login'; draw(); } }, 'ログイン')));
+    body.append(h('label', { class: 'field', for: 'au-mail' }, h('span', {}, 'メールアドレス'), email));
+    if (mode !== 'forgot') body.append(h('label', { class: 'field', for: 'au-pw' }, h('span', {}, 'パスワード（8文字以上）'), pw));
+    body.append(note, btn);
+    const valid = () => {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim())) { draw('メールアドレスの形式を確認してください', true); return false; }
+      if (mode !== 'forgot' && pw.value.length < 8) { sentTo = email.value.trim(); draw('パスワードは8文字以上にしてください', true); return false; }
+      return true;
+    };
+    if (mode === 'signup') {
+      btn.textContent = 'アカウントを作る';
+      btn.onclick = () => valid() && run(async () => {
+        sentTo = email.value.trim();
+        const r = await cloud.signUp(sentTo, pw.value);
+        if (r.needsConfirm) { mode = 'sent'; draw(); }
+      });
+      body.append(h('p', { class: 'small muted', style: 'margin:0' }, '登録後に届く確認メールのリンクを開いてください。ログイン状態はこの端末に保持されます（共有の端末では使い終わったらログアウトしてください）。'));
+    } else if (mode === 'login') {
+      btn.textContent = 'ログイン';
+      btn.onclick = () => valid() && run(async () => { sentTo = email.value.trim(); await cloud.signIn(sentTo, pw.value); });
+      body.append(h('button', { class: 'btn ghost block', onclick: () => { sentTo = email.value.trim(); mode = 'forgot'; draw(); } }, 'パスワードを忘れた'));
+    } else {
+      btn.textContent = '再設定のメールを送る';
+      btn.onclick = () => valid() && run(async () => { sentTo = email.value.trim(); await cloud.resetPassword(sentTo); draw('再設定のメールを送りました。リンクを開くと新しいパスワードを設定できます'); });
+    }
+    body.append(h('button', { class: 'btn ghost block', onclick: () => { state.localOnly = true; persist(); location.hash = state.onboarded ? '#/gym' : '#/onboarding'; route(); } }, 'ログインせずにこの端末だけで使う'));
+    wrap.append(hero, body);
+    if (msg && mode !== 'forgot') pw.value = '';
+  }
+  draw(!cloud.ready() ? 'サーバーに接続できません。通信を確認して、ページを読み込み直してください' : '', !cloud.ready());
+}
+
+function renderPasswordReset() {
+  const box = h('div', { class: 'pad stack' });
+  view.append(box);
+  const pw = h('input', { class: 'in', id: 'np', type: 'password', autocomplete: 'new-password', placeholder: '8文字以上' });
+  const msg = h('p', { class: 'err', role: 'alert' });
+  box.append(h('h2', { class: 'sec' }, '新しいパスワード'), h('label', { class: 'field', for: 'np' }, h('span', {}, '新しいパスワード（8文字以上）'), pw), msg,
+    h('button', { class: 'btn primary lg block', onclick: async () => {
+      if (pw.value.length < 8) { msg.textContent = '8文字以上にしてください'; return; }
+      try { await cloud.updatePassword(pw.value); toast('パスワードを変更しました'); location.hash = '#/gym'; } catch (e) { msg.textContent = e.message; }
+    } }, '変更する'));
+}
+
+// クラウドに送るプロフィール（体型は記録から計算した段階を添える。他の人のジムでの見た目になる）
+function profileRow() {
+  const x = store.expSummary();
+  const { stages, frame, ...look } = state.profile.look;
+  return {
+    display_name: (state.profile.name || 'トレーニー').slice(0, 16),
+    look: { ...look, stages: stagesFromExp(x.exp) },
+    title_id: state.profile.title || 't_first',
+    join_gym: !!state.privacy.join,
+    show_name: !!state.privacy.name,
+    show_content: !!state.privacy.content,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
+    onboarded_at: state.onboarded ? state.onboardedAt || new Date().toISOString() : null,
+  };
+}
+store.setProfileSource(profileRow);
+
+// ログイン直後: 記録とプロフィールを取り込み、ログインなしの記録があれば移すか確認
+let afterLoginRunning = false;
+async function afterLogin() {
+  const u = cloud.user();
+  if (!u || afterLoginRunning) return;
+  afterLoginRunning = true;
+  try {
+    if (state.userId && state.userId !== u.id) {
+      // 別の人に切り替わった: 前の人の見た目・設定を持ち込まない
+      const keep = { demo: state.demo };
+      state = { ...fresh(), ...keep };
+    }
+    state.userId = u.id;
+    state.localOnly = false;
+    store.setUser(u.id);
+    const [prof] = await Promise.all([cloud.fetchProfile(), store.pull()]);
+    if (prof) {
+      const { stages, ...look } = prof.look || {};
+      state.profile = { name: prof.display_name, look: { ...DEFAULT_LOOK, stages: undefined, frame: undefined, ...look }, title: prof.title_id };
+      state.privacy = { join: prof.join_gym, name: prof.show_name, content: prof.show_content };
+      state.onboarded = !!prof.onboarded_at;
+      state.onboardedAt = prof.onboarded_at;
+    } else if (state.onboarded) {
+      store.profileChanged(); // ログインなしで作ったキャラをアカウントへ
+    }
+    persist();
+    const g = store.guestSummary();
+    if (g) {
+      const ok = await confirmDialog('この端末の記録を移しますか？', `ログインなしで保存した記録（トレーニング ${g.workouts} 件・からだ ${g.bodyDays} 日）があります。このアカウントに移しますか？ 元のデータは消しません。`,
+        [{ label: 'あとで', value: null }, { label: '移す', value: true, primary: true }]);
+      if (ok) toast(`${store.migrateGuest()} 件の記録を移しました`);
+    }
+    await store.flush();
+  } catch (e) {
+    toast('クラウドから読み込めませんでした: ' + e.message, true);
+  } finally {
+    afterLoginRunning = false;
+  }
+}
+
+async function logout() {
+  const st = store.syncStatus();
+  if (st.pending) {
+    const c = await confirmDialog('送信していない記録があります', `まだクラウドに送れていない変更が ${st.pending} 件あります。`, [
+      { label: 'やめる', value: null }, { label: '送ってから', value: 'send', primary: true }, { label: '書き出してから', value: 'export' }, { label: '捨ててログアウト', value: 'discard' }]);
+    if (!c) return;
+    if (c === 'send') { await store.flush(); if (store.syncStatus().pending) { toast('送信できませんでした。電波の良い所でもう一度', true); return; } }
+    if (c === 'export') exportBackup();
+  }
+  const uid = cloud.user()?.id;
+  await cloud.signOut();
+  if (uid) store.clearUserCache(uid); // 別の人に前の記録を見せない
+  try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+  store.setUser(null);
+  const keep = { demo: state.demo };
+  state = { ...fresh(), ...keep };
+  persist();
+  location.hash = '#/auth';
+  route();
+}
+
+function accountRows() {
+  if (!cloud.enabled) return [h('div', {}, h('span', {}, 'アカウント'), h('span', { class: 'v' }, 'ログインなし（この端末だけ）'))];
+  const u = cloud.user();
+  if (!u) return [h('div', {}, h('span', {}, 'アカウント'), h('span', { class: 'v' }, 'ログインなし')),
+    h('button', { onclick: () => { state.localOnly = false; persist(); location.hash = '#/auth'; route(); } }, h('span', {}, 'ログイン・アカウント作成'), h('span', { class: 'v' }, '›'))];
+  const st = store.syncStatus();
+  return [
+    h('div', {}, h('span', {}, 'アカウント'), h('span', { class: 'v' }, u.email)),
+    h('div', {}, h('span', {}, '同期'), h('span', { class: 'v' }, syncLabel(st))),
+    ...store.conflicts().map((c) => h('div', { style: 'flex-wrap:wrap' },
+      h('span', { class: 'small' }, `${c.local.date} の記録が別の端末と食い違っています`),
+      h('span', { style: 'display:flex;gap:6px' },
+        h('button', { class: 'btn', style: 'min-height:36px', onclick: () => { store.resolveConflict(c.id, 'remote'); route(); } }, 'クラウドを使う'),
+        h('button', { class: 'btn', style: 'min-height:36px', onclick: () => { store.resolveConflict(c.id, 'local'); route(); } }, 'この端末を使う')))),
+    h('button', { onclick: logout }, h('span', {}, 'ログアウト'), h('span', { class: 'v' }, '›')),
+  ];
+}
+function syncLabel(st) {
+  if (st.state === 'local') return 'この端末だけ';
+  if (st.conflicts) return `食い違い ${st.conflicts} 件`;
+  if (st.state === 'syncing') return '送信中…';
+  if (st.state === 'offline') return `オフライン（${st.pending} 件あとで送信）`;
+  if (st.state === 'error') return `送信待ち ${st.pending} 件（再試行します）`;
+  if (st.pending) return `送信待ち ${st.pending} 件`;
+  return 'クラウドに保存済み';
+}
+function exportBackup() {
+  const blob = new Blob([store.exportData({ name: state.profile.name, look: state.profile.look, title: state.profile.title })], { type: 'application/json' });
+  const a = h('a', { href: URL.createObjectURL(blob), download: `kinniku-morimori-${today()}.json` });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// 画面上部の帯に同期の状態を出す（保存がサーバーで確定する前に「保存済み」と言わない）
+store.onSync((st) => {
+  const bar = document.querySelector('.demo-bar');
+  if (!bar) return;
+  if (!cloud.enabled || !cloud.user()) { bar.textContent = cloud.enabled ? 'ベータ版：ログインなし・記録はこの端末だけ' : 'ベータ版：記録はこの端末に保存・ジムの他の人は見本'; return; }
+  bar.textContent = 'ベータ版：' + syncLabel(st);
+});
+
+async function boot() {
+  if (cloud.enabled) {
+    await cloud.init();
+    cloud.onAuth((event) => {
+      if (event === 'PASSWORD_RECOVERY') { location.hash = '#/auth/reset'; route(); return; }
+      if (event === 'SIGNED_IN') afterLogin().then(() => route());
+      if (event === 'SIGNED_OUT') route();
+    });
+    if (cloud.user()) await afterLogin();
+    else store.setUser(null);
+  }
+  route();
+  // 画面に戻った時に送信待ちを再送
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) store.flushSoon(200); });
+}
+boot();
