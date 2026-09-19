@@ -8,7 +8,7 @@ import * as cloud from './cloud.js';
 
 const GUEST = 'kmg2.data.v1';
 let KEY = GUEST;
-const empty = () => ({ app: 'kinniku-morimori-gym', schema: 2, workouts: [], body: {}, queue: [], conflicts: [] });
+const empty = () => ({ app: 'kinniku-morimori-gym', schema: 2, workouts: [], body: {}, queue: [], conflicts: [], customExercises: [] });
 
 function read(k) {
   try {
@@ -38,7 +38,51 @@ window.addEventListener('storage', (e) => {
 export const uuid = () =>
   crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => ((c === 'x' ? Math.random() * 16 : (Math.random() * 4) | 8) | 0).toString(16));
 const isUuid = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s || '');
-const exOf = (id) => EXERCISES.find((x) => x.id === id);
+/* ---------- 種目（標準 + 自分で追加した種目） ----------
+ * 自分の種目は id が 'c_' で始まる。記録の各種目にも { custom: {name, part, method} } として控えを持たせるので、
+ * 別の端末・履歴・共有ジムでも名前が分かる（データベースの変更は不要） */
+const PARTS_OK = ['chest', 'back', 'shoulder', 'leg', 'arm', 'abs', 'cardio'];
+const METHODS_OK = ['wr', 'bw', 'assist', 'time', 'cardio'];
+function cleanCustom(c) {
+  if (!c || typeof c !== 'object') return null;
+  const name = String(c.name || '').trim().slice(0, 30);
+  if (!name) return null;
+  const part = PARTS_OK.includes(c.part) ? c.part : 'chest';
+  const method = part === 'cardio' ? 'cardio' : METHODS_OK.includes(c.method) && c.method !== 'cardio' ? c.method : 'wr';
+  return { name, part, method };
+}
+export function exById(id, entry) {
+  const std = EXERCISES.find((x) => x.id === id);
+  if (std) return std;
+  const mine = (db.customExercises || []).find((x) => x.id === id);
+  if (mine) return mine;
+  const c = cleanCustom(entry && entry.custom);
+  if (c) return { id, alias: [], custom: true, ...c };
+  return { id, name: '（不明な種目）', part: 'chest', method: 'wr', alias: [], custom: true };
+}
+const exOf = (id, entry) => exById(id, entry);
+export function customExercises() {
+  // 記録の中にだけある自分の種目（別の端末で追加したもの）も一覧に含める
+  const map = new Map((db.customExercises || []).map((x) => [x.id, x]));
+  for (const w of db.workouts) for (const en of w.entries || []) {
+    if (!String(en.exId).startsWith('c_') || map.has(en.exId)) continue;
+    const c = cleanCustom(en.custom);
+    if (c) map.set(en.exId, { id: en.exId, alias: [], custom: true, ...c });
+  }
+  return [...map.values()];
+}
+export function addCustomExercise(def) {
+  const c = cleanCustom(def);
+  if (!c) throw new Error('種目名を入力してください');
+  const n = (s) => s.normalize('NFKC').toLowerCase();
+  const all = EXERCISES.concat(customExercises());
+  const dup = all.find((x) => n(x.name) === n(c.name));
+  if (dup) return dup;
+  const ex = { id: 'c_' + uuid(), alias: [], custom: true, ...c };
+  db.customExercises = (db.customExercises || []).concat([ex]);
+  if (!persist()) throw new Error('保存できませんでした');
+  return ex;
+}
 const tz = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo';
 
 /* ---------- 同期の状態 ---------- */
@@ -83,13 +127,23 @@ export const getWorkout = (id) => db.workouts.find((w) => w.id === id) || null;
 // 完了セットだけを保存（未完了は下書き扱い）。id があれば更新
 export function saveWorkout({ id, date, entries, comment }) {
   const clean = entries
-    .map((en) => ({ id: en.id || uuid(), exId: en.exId, sets: en.sets.filter((s) => s.done).map((s) => ({ ...s, id: s.id || uuid(), done: true })) }))
+    .map((en) => {
+      const ex = exById(en.exId, en);
+      const out = { id: en.id || uuid(), exId: en.exId, sets: en.sets.filter((s) => s.done).map((s) => ({ ...s, id: s.id || uuid(), done: true })) };
+      if (String(en.exId).startsWith('c_')) out.custom = { name: ex.name, part: ex.part, method: ex.method };
+      return out;
+    })
     .filter((en) => en.sets.length);
   const now = Date.now();
   let w = id ? getWorkout(id) : null;
   const before = w ? JSON.parse(JSON.stringify(w)) : null;
   if (w) Object.assign(w, { date, entries: clean, comment: comment || '', updatedAt: now });
   else {
+    // ひとことだけ先に投稿していた場合、その後のトレーニング記録にひとことを引き継ぐ（ジムでは最新の記録を表示するため）
+    if (!comment && clean.length) {
+      const c = db.workouts.filter((x) => !x.deletedAt && !x.entries.length && x.comment && now - x.createdAt < 24 * 3600e3).sort((a, b) => b.createdAt - a.createdAt)[0];
+      if (c) comment = c.comment;
+    }
     w = { id: uuid(), date, entries: clean, comment: comment || '', timezone: tz(), createdAt: now, updatedAt: now, version: 0 };
     db.workouts.push(w);
   }
@@ -119,6 +173,17 @@ export function restoreWorkout(id) {
   const ok = persist();
   flushSoon();
   return ok;
+}
+
+// ひとことだけの投稿（依頼者指示: トレーニングの記録なしでも投稿できる）。
+// 直近24時間の自分の記録があればそのひとことを書き換え（期限は延びない）、なければひとことだけの記録を作る
+export function postComment(comment, today) {
+  const text = String(comment || '').trim().slice(0, 40);
+  if (!text) throw new Error('ひとことを入力してください');
+  const yesterday = ymd(new Date(Date.now() - 86400e3));
+  const recent = listWorkouts().filter((w) => Date.now() - w.createdAt < 24 * 3600e3 && w.date >= yesterday).sort((a, b) => b.createdAt - a.createdAt)[0];
+  if (recent) return saveWorkout({ id: recent.id, date: recent.date, entries: recent.entries, comment: text });
+  return saveWorkout({ date: today, entries: [], comment: text });
 }
 
 export function previousFor(exId, date, excludeId) {
@@ -310,7 +375,7 @@ export function expSummary() {
   for (const w of listWorkouts()) {
     const d = (byDate[w.date] = byDate[w.date] || { parts: {}, valid: false });
     for (const en of w.entries) {
-      const ex = exOf(en.exId);
+      const ex = exOf(en.exId, en);
       if (!ex || !en.sets.length) continue;
       d.valid = true;
       if (ex.part === 'cardio') continue;
@@ -336,14 +401,14 @@ export function expGainOf(entries, date, excludeId) {
   for (const w of listWorkouts()) {
     if (w.date !== date || w.id === excludeId) continue;
     for (const en of w.entries) {
-      const ex = exOf(en.exId);
+      const ex = exOf(en.exId, en);
       if (ex && ex.part !== 'cardio') before[ex.part] = (before[ex.part] || 0) + en.sets.length * 5;
     }
   }
   const after = { ...before };
   let valid = false;
   for (const en of entries) {
-    const ex = exOf(en.exId);
+    const ex = exOf(en.exId, en);
     const n = en.sets.filter((s) => s.done).length;
     if (!ex || !n) continue;
     valid = true;

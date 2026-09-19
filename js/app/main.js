@@ -200,10 +200,12 @@ function openSheet({ title, body, foot, full = false, expandable = true, onClose
     scrim.remove();
     sheet.remove();
     sheetStack = sheetStack.filter((s) => s.close !== close);
+    if (!sheetStack.length) document.body.classList.remove('sheet-open');
     if (prevFocus && prevFocus.isConnected) prevFocus.focus();
   }
   root.append(scrim, sheet);
   sheetStack.push({ close, sheet });
+  document.body.classList.add('sheet-open');
   const first = sheet.querySelector('.sheet-body button, .sheet-body input, .sheet-body [tabindex]') || closeBtn;
   setTimeout(() => first.focus({ preventScroll: true }), 30);
   return { close, sheet, setFull };
@@ -219,6 +221,12 @@ document.addEventListener('keydown', (e) => {
     else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
   }
 });
+document.addEventListener('focusin', (e) => {
+  if (e.target.matches('input:not([type=checkbox]):not([type=file]), textarea')) document.body.classList.add('typing');
+});
+document.addEventListener('focusout', () => setTimeout(() => {
+  if (!document.activeElement || !document.activeElement.matches('input, textarea')) document.body.classList.remove('typing');
+}, 50));
 // キーボード表示中の見える高さをシートへ
 if (window.visualViewport) {
   const upd = () => document.documentElement.style.setProperty('--vvh', visualViewport.height + 'px');
@@ -417,7 +425,7 @@ function safeLook(l) {
   };
 }
 const menuOf = (entries) => (Array.isArray(entries) ? entries : []).map((en) => {
-  const ex = EXERCISES.find((x) => x.id === en.exId);
+  const ex = store.exById(en.exId, en);
   return ex ? [PART_FILTERS.find((q) => q.id === ex.part).name, ex.name, setsSummary(ex, Array.isArray(en.sets) ? en.sets : [])] : null;
 }).filter(Boolean);
 
@@ -451,7 +459,9 @@ function renderGym() {
   const stage = h('div', { class: 'gym-stage' });
   const info = h('div', { class: 'gym-info' });
   const note = h('p', { class: 'muted small', style: 'padding:0 16px;margin:0' });
-  const cta = h('div', { class: 'gym-cta' }, h('button', { class: 'btn primary lg block', onclick: () => openTrainingSheet() }, 'トレーニングを記録'));
+  const cta = h('div', { class: 'gym-cta', style: 'display:flex;gap:8px' },
+    h('button', { class: 'btn lg', style: 'flex:1', onclick: () => openCommentSheet() }, 'ひとこと'),
+    h('button', { class: 'btn primary lg', style: 'flex:2.4', onclick: () => goRecord() }, 'トレーニングを記録'));
   view.append(head, stage, info, note, cta);
 
   let bubbleTimer = 0;
@@ -711,14 +721,54 @@ function trainingForm({ inSheet, editId, onSaved }) {
       const q = h('input', { class: 'in', id: 'ex-q', type: 'search', placeholder: '種目を検索（ひらがな・カタカナ可）', value: query, autocomplete: 'off',
         oninput: (e) => { query = e.target.value; drawResults(); } });
       const res = h('ul', { class: 'ex-results', role: 'listbox', 'aria-label': '種目' });
+      const addBox = h('div');
       function drawResults() {
         const nq = norm(query);
-        const list = EXERCISES.filter((x) => (!nq ? x.part === d.filter : true) && (!nq || norm(x.name).includes(nq) || x.alias.some((a) => norm(a).includes(nq))));
-        res.replaceChildren(...list.map((x) => h('li', {}, h('button', { onclick: () => addEntry(x) }, x.name, h('small', {}, PART_FILTERS.find((p) => p.id === x.part).name)))));
-        if (!list.length) res.append(h('li', { class: 'muted small', style: 'padding:10px 12px' }, '見つかりません。自分用の種目の追加は今後対応します。'));
+        const pool = EXERCISES.concat(store.customExercises());
+        const list = pool.filter((x) => (!nq ? x.part === d.filter : true) && (!nq || norm(x.name).includes(nq) || x.alias.some((a) => norm(a).includes(nq))));
+        res.replaceChildren(...list.map((x) => h('li', {}, h('button', { onclick: () => addEntry(x) }, x.name, h('small', {}, (x.custom ? '自分・' : '') + PART_FILTERS.find((p) => p.id === x.part).name)))));
+        if (!list.length) res.append(h('li', { class: 'muted small', style: 'padding:10px 12px' }, '見つかりません。下の「自分の種目を追加」から登録できます。'));
+        drawAdd();
+      }
+      // 自分の種目を追加（名前・部位・記録のしかた）
+      let adding = false;
+      const METHOD_NAMES = [['wr', '重量×回数'], ['bw', '自重（回数）'], ['assist', 'アシスト'], ['time', '時間（秒）']];
+      function drawAdd() {
+        addBox.replaceChildren();
+        if (!adding) {
+          addBox.append(h('button', { class: 'btn block', style: 'margin-top:8px', onclick: () => { adding = true; drawAdd(); addBox.querySelector('input')?.focus(); } },
+            query.trim() ? `＋「${query.trim().slice(0, 30)}」を自分の種目として追加` : '＋ 自分の種目を追加'));
+          return;
+        }
+        const def = { name: query.trim().slice(0, 30), part: d.filter, method: d.filter === 'cardio' ? 'cardio' : 'wr' };
+        const nameIn = h('input', { class: 'in', id: 'cx-name', maxlength: 30, value: def.name, placeholder: '例: ケーブルクロスオーバー', oninput: (e) => (def.name = e.target.value) });
+        const err = h('p', { class: 'err', role: 'alert', style: 'margin:0' });
+        const partChips = h('div', { class: 'chips' });
+        const methodChips = h('div', { class: 'chips' });
+        const paint = () => {
+          partChips.replaceChildren(...PART_FILTERS.map((p) => h('button', { 'aria-pressed': String(def.part === p.id), onclick: () => { def.part = p.id; if (p.id === 'cardio') def.method = 'cardio'; else if (def.method === 'cardio') def.method = 'wr'; paint(); } }, p.name)));
+          methodChips.replaceChildren(...(def.part === 'cardio' ? [['cardio', '時間（分）・距離']] : METHOD_NAMES).map(([k, n]) => h('button', { 'aria-pressed': String(def.method === k), onclick: () => { def.method = k; paint(); } }, n)));
+        };
+        paint();
+        addBox.append(h('div', { class: 'card stack', style: 'margin-top:8px;background:#1a1d21' },
+          h('b', {}, '自分の種目を追加'),
+          h('label', { class: 'field', for: 'cx-name' }, h('span', {}, '種目名（30文字まで）'), nameIn),
+          h('div', {}, h('div', { class: 'small muted', style: 'margin-bottom:4px' }, '鍛える部位（EXPが入る部位）'), partChips),
+          h('div', {}, h('div', { class: 'small muted', style: 'margin-bottom:4px' }, '記録のしかた'), methodChips),
+          err,
+          h('div', { style: 'display:flex;gap:8px' },
+            h('button', { class: 'btn', style: 'flex:1', onclick: () => { adding = false; drawAdd(); } }, 'やめる'),
+            h('button', { class: 'btn primary', style: 'flex:2', onclick: () => {
+              try {
+                const ex = store.addCustomExercise(def);
+                adding = false;
+                toast(ex.custom ? `「${ex.name}」を追加しました` : `「${ex.name}」はすでにあります`);
+                addEntry(ex);
+              } catch (e) { err.textContent = e.message; }
+            } }, '追加して記録する'))));
       }
       drawResults();
-      box.append(h('label', { class: 'field', for: 'ex-q' }, h('span', {}, '種目を追加'), q), res);
+      box.append(h('label', { class: 'field', for: 'ex-q' }, h('span', {}, '種目を追加'), q), res, addBox);
     } else {
       box.append(h('button', { class: 'btn block', onclick: () => { searchOpen = true; draw(); $('#ex-q')?.focus(); } }, '＋ 種目を追加'));
     }
@@ -739,7 +789,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
   let cnt;
 
   function addEntry(x) {
-    d.entries.push({ id: uid(), exId: x.id, sets: [{ id: uid(), done: false }] });
+    d.entries.push({ id: uid(), exId: x.id, sets: [{ id: uid(), done: false }], ...(x.custom ? { custom: { name: x.name, part: x.part, method: x.method } } : {}) });
     query = '';
     searchOpen = false;
     changed();
@@ -747,7 +797,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
   }
 
   function entryCard(en) {
-    const ex = EXERCISES.find((x) => x.id === en.exId);
+    const ex = store.exById(en.exId, en);
     const cols = METHOD_COLS[ex.method];
     const prev = store.previousFor(en.exId, d.date, editId);
     const card = h('div', { class: 'ex-card' });
@@ -849,7 +899,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
     let valid = 0;
     const gained = {};
     d.entries.forEach((en) => {
-      const ex = EXERCISES.find((x) => x.id === en.exId);
+      const ex = store.exById(en.exId, en);
       en.sets.forEach((s) => {
         if (!s.done) return;
         const num = (k) => (s[k] === '' || s[k] == null ? null : Number(s[k]));
@@ -897,6 +947,42 @@ function openTrainingSheet({ editId } = {}) {
   const { body, foot } = trainingForm({ inSheet: true, editId, onSaved: () => { if (sh) sh.close(); route(); } });
   sh = openSheet({ title: editId ? '記録を編集' : 'トレーニングを記録', body, foot, full: !!editId });
 }
+// 記録ページ（トレーニング）へ。入力中にジムの絵が出ないよう、重ねて開かずにページを切り替える
+function goRecord() {
+  state.recordTab = 'training';
+  persist();
+  if (location.hash === '#/record') route();
+  else location.hash = '#/record';
+}
+
+// ひとことだけ投稿（トレーニングの記録なしでもOK）
+function openCommentSheet() {
+  const text = h('textarea', { class: 'in', id: 'cm-text', rows: 2, maxlength: 40, placeholder: '例: 今日は軽めにストレッチ' });
+  const cnt = h('span', { class: 'muted small' }, '0/40');
+  text.addEventListener('input', () => (cnt.textContent = `${[...text.value].length}/40`));
+  const err = h('p', { class: 'err', role: 'alert', style: 'margin:0' });
+  const joinBox = h('input', { type: 'checkbox', id: 'cm-join', role: 'switch' });
+  joinBox.checked = true;
+  const body = h('div', { class: 'sheet-body stack' },
+    h('label', { class: 'field', for: 'cm-text' }, h('span', {}, 'ひとこと（40文字まで）'), text),
+    h('div', { style: 'display:flex;justify-content:space-between' }, h('span', { class: 'small muted' }, '共有ジムの全員に24時間表示されます'), cnt),
+    state.privacy.join ? null : h('label', { class: 'toggle', for: 'cm-join' }, h('span', {}, 'ジムに参加して表示する', h('br'), h('small', { class: 'muted' }, 'オフのままだと自分にしか見えません')), joinBox),
+    err);
+  const foot = h('div', { class: 'sheet-foot' });
+  const sh = openSheet({ title: 'ひとこと', body, foot, expandable: false });
+  sh.sheet.style.height = 'auto';
+  foot.append(h('button', { class: 'btn', style: 'flex:1', onclick: () => sh.close() }, 'やめる'),
+    h('button', { class: 'btn primary', style: 'flex:2', onclick: () => {
+      try {
+        if (!state.privacy.join && joinBox.checked) { state.privacy.join = true; persist(); store.profileChanged(); }
+        if (!store.postComment(text.value, today())) { err.textContent = '保存できませんでした'; return; }
+        sh.close();
+        toast('ひとことを投稿しました');
+        route();
+      } catch (e) { err.textContent = e.message; }
+    } }, '投稿する'));
+}
+
 const copySet = ({ id, done, ...vals }) => ({ ...Object.fromEntries(Object.entries(vals).map(([k, v]) => [k, v == null ? '' : String(v)])), id: uid(), done: false });
 // 保存済みのメニューを今日の下書きへコピー（新しいID・完了オフ・コメントはコピーしない）
 async function copyMenuToDraft(w) {
@@ -910,7 +996,7 @@ async function copyMenuToDraft(w) {
   const copied = w.entries.map((en) => ({ id: uid(), exId: en.exId, sets: en.sets.map(copySet) }));
   const next = { date: today(), filter: cur.filter, comment: mode === 'add' ? cur.comment : '', entries: mode === 'add' ? cur.entries.concat(copied) : copied };
   try { localStorage.setItem(DRAFT_KEY, JSON.stringify(next)); } catch (e) {}
-  openTrainingSheet();
+  goRecord();
   toast(`${w.date.slice(5).replace('-', '/')}のメニューをコピーしました（完了はオフ）`);
 }
 
@@ -1042,16 +1128,17 @@ function trainingHistory(from, to) {
     h('b', {}, `${md(date)}（${'日月火水木金土'[new Date(date + 'T00:00').getDay()]}）`),
     ...ws.map((w) => h('button', { class: 'hist-item', onclick: () => openWorkoutDetail(w) },
       ...w.entries.map((en) => {
-        const ex = EXERCISES.find((x) => x.id === en.exId);
+        const ex = store.exById(en.exId, en);
         return h('div', { class: 'hist-row' }, h('span', { class: 'pill' }, PART_FILTERS.find((q) => q.id === ex.part).name), h('span', {}, ex.name), h('small', { class: 'muted' }, setsSummary(ex, en.sets)));
       }),
+      w.entries.length ? null : h('div', { class: 'small muted' }, 'ひとことのみ'),
       w.comment ? h('div', { class: 'small muted' }, '「' + w.comment + '」') : null))));
 }
 
 function openWorkoutDetail(w) {
   const body = h('div', { class: 'sheet-body' },
     ...w.entries.map((en) => {
-      const ex = EXERCISES.find((x) => x.id === en.exId);
+      const ex = store.exById(en.exId, en);
       return h('div', { class: 'card', style: 'margin-bottom:8px' }, h('b', {}, ex.name), h('div', { class: 'small muted' }, setsSummary(ex, en.sets)));
     }),
     w.comment ? h('p', { class: 'small' }, 'ひとこと: ' + w.comment) : null,

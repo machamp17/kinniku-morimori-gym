@@ -305,3 +305,10 @@ table.sets tr.done input.in { border-color: #2c6e66; background: #16302d; }
 .chart svg { display: block; }
 .pfc-bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: 8px 0; }
 .pfc-bar i { display: block; height: 100%; }
+
+/* シートを開いている間は背面を動かさない */
+body.sheet-open { overflow: hidden; overscroll-behavior: none; }
+/* 文字入力中は下のメニューを隠す（キーボードで入力欄・保存ボタンが隠れないように） */
+body.typing .nav { display: none; }
+body.typing .sheet-foot[style*="sticky"] { bottom: 0 !important; }
+body.typing .view { padding-bottom: 16px; }
