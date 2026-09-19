@@ -7,9 +7,9 @@ import { SKINS, HAIR_COLORS, CLOTH_COLORS, FIXED, clothRamp, mix, pickById } fro
 import { hairParts } from './hair.js';
 
 // 肩はレベルが上がるたびに少しずつ広がる（依頼者指示で5段階→Lv1〜13の13段階）。
-// 段階 0〜12 を倍率へ。後半ほど大きく伸びるギャグ曲線。上限は詳細2.2倍・ジム1.6倍
+// 段階 0〜12 を倍率へ。後半ほど大きく伸びるギャグ曲線。上限は約2.2倍
 export const SHOULDER_STEPS = 12;
-const SHOULDER_MAX = { detail: 2.2, gym: 1.6 };
+const SHOULDER_MAX = { detail: 2.2, gym: 2.2 }; // ジムでも肩の大きさが分かるよう詳細と同じ倍率（依頼者指示）
 export function shoulderMult(kind, stage) {
   const t = Math.max(0, Math.min(1, stage / SHOULDER_STEPS));
   return 1 + (SHOULDER_MAX[kind] - 1) * Math.pow(t, 1.35);

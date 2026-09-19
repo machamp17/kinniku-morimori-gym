@@ -89,13 +89,17 @@ function h(tag, attrs = {}, ...kids) {
   for (const c of kids.flat()) if (c != null && c !== false) el.append(c.nodeType ? c : document.createTextNode(String(c)));
   return el;
 }
+// 子要素を入れ替える。null / false は表示しない（replaceChildren は null を文字の「null」にしてしまうため）
+function fill(el, ...kids) {
+  el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
+}
 const $ = (s, r = document) => r.querySelector(s);
 const view = $('#view');
 
 let toastT = 0;
 function toast(msg, bad = false, action) {
   const t = $('#toast');
-  t.replaceChildren(msg);
+  fill(t, msg);
   if (action) {
     const b = h('button', { class: 'btn', style: 'min-height:32px;margin-left:10px;padding:0 10px', onclick: () => { action.fn(); t.classList.remove('show'); } }, action.label);
     t.append(b);
@@ -279,9 +283,9 @@ function route() {
   const subTitle = path === '/settings' ? '設定' : path === '/settings/character' ? 'キャラクター設定' : null;
   tt.classList.remove('has-logo');
   tt.querySelector('canvas')?.remove();
-  tt.replaceChildren(h('span', { class: 'logo-text' }, subTitle || '筋肉モリモリジム'));
+  fill(tt, h('span', { class: 'logo-text' }, subTitle || '筋肉モリモリジム'));
   if (!subTitle) mountLogo(tt, { heightCss: 32 });
-  view.replaceChildren();
+  fill(view);
   routes[path]();
   view.scrollTop = 0;
   window.scrollTo(0, 0);
@@ -300,7 +304,7 @@ function renderOnboarding() {
   view.append(wrap);
   const STEPS = 4;
   function draw() {
-    wrap.replaceChildren();
+    fill(wrap);
     window.scrollTo(0, 0);
     if (step === 0) wrap.append(h('div', { class: 'onb-hero' },
       charEl({ ...DEFAULT_LOOK, ...typeDefaults('male'), type: 'male' }, 'gym', { label: '男性キャラクター' }),
@@ -424,6 +428,16 @@ function safeLook(l) {
     stages: { chest: num(st.chest, 2), back: num(st.back, 2), shoulder: Math.round(num(st.shoulder, 12)), arm: num(st.arm, 2), leg: num(st.leg, 2), abs: num(st.abs, 2) },
   };
 }
+function bodyTags(look) {
+  const st = (look && look.stages) || {};
+  const sh = Math.round(st.shoulder || 0) + 1;
+  const tags = [`肩Lv.${sh >= 13 ? '13+' : sh}`];
+  if (sh >= 10) tags.push('肩だけ異世界');
+  else if (sh >= 7) tags.push('横幅注意');
+  const big = ['chest', 'back', 'arm', 'leg'].filter((k) => (st[k] || 0) >= 1.6).length;
+  if (big >= 2) tags.push('ムキムキ');
+  return h('div', { style: 'display:flex;gap:4px;flex-wrap:wrap;margin-top:6px' }, ...tags.map((t, i) => h('span', { class: 'pill' + (i ? ' reward' : '') }, t)));
+}
 const menuOf = (entries) => (Array.isArray(entries) ? entries : []).map((en) => {
   const ex = store.exById(en.exId, en);
   return ex ? [PART_FILTERS.find((q) => q.id === ex.part).name, ex.name, setsSummary(ex, Array.isArray(en.sets) ? en.sets : [])] : null;
@@ -479,7 +493,7 @@ function renderGym() {
   function drawStage() {
     countEl.textContent = loading ? '…' : String(members.length);
     if (page >= pages()) page = pages() - 1;
-    stage.replaceChildren();
+    fill(stage);
     // ポスター（読めるテキストとして配置）
     [31.3, 44.2, 57.1].forEach((x, i) => stage.append(h('div', { class: 'poster', style: `left:${x}%` }, POSTERS[i].join(''))));
     const list = pageMembers();
@@ -494,7 +508,7 @@ function renderGym() {
       stage.append(b);
     });
     drawBubbles();
-    info.replaceChildren(
+    fill(info, 
       h('span', {}, reduceMotion() ? '吹き出しは手動で切替' : '吹き出しは20秒ごとに交代'),
       reduceMotion() && candidates().length > 3 ? h('button', { class: 'btn', style: 'min-height:36px', onclick: () => { rotate(); } }, '次の吹き出し') : null,
       pages() > 1 ? h('div', { class: 'pager' },
@@ -562,7 +576,7 @@ function renderGym() {
         id: r.workout_id, me: r.is_me, name: r.display_name, nameVisible: true, contentVisible: r.entries != null,
         title: titleName(r.title_id), recordedMinAgo: Math.max(0, Math.floor((Date.now() - Date.parse(r.recorded_at)) / 60000)),
         comment: r.comment ? String(r.comment).slice(0, 40) : null, menu: r.entries ? menuOf(r.entries) : [], nice: r.nice_count, niced: r.niced,
-        look: safeLook(r.look),
+        look: r.is_me ? myLook() : safeLook(r.look),
       }));
       // 自分を先頭に（ページ1に必ず入れる）
       members.sort((a, b) => (b.me ? 1 : 0) - (a.me ? 1 : 0));
@@ -617,13 +631,14 @@ function renderGym() {
       try { await cloud.report(m.id, reason); toast('通報しました。運営が確認します'); } catch (e) { toast(e.message, true); }
     }
     function draw() {
-      body.replaceChildren(
+      fill(body, 
         h('div', { class: 'member' },
-          h('div', { class: 'portrait' }, charEl(m.look, 'gym', { label: 'キャラクター' })),
+          h('div', { class: 'portrait' }, charEl(m.look, 'detail', { label: 'キャラクター', fit: 130 })),
           h('div', {},
             h('h3', {}, m.nameVisible ? m.name : 'トレーニー'),
             h('div', { class: 'title-badge', style: 'margin:4px 0' }, m.title),
-            h('div', { class: 'muted small' }, agoLabel(m.recordedMinAgo)))),
+            h('div', { class: 'muted small' }, agoLabel(m.recordedMinAgo)),
+            bodyTags(m.look))),
         h('div', { class: 'seg', role: 'tablist', style: 'margin:12px 0' },
           h('button', { role: 'tab', 'aria-selected': String(tab === 'comment'), onclick: () => { tab = 'comment'; draw(); } }, 'ひとこと'),
           h('button', { role: 'tab', 'aria-selected': String(tab === 'training'), onclick: () => { tab = 'training'; draw(); } }, 'トレーニング')),
@@ -707,7 +722,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
   function changed() { if (!editing) saveDraftSoon(d, status); else status.textContent = '未保存の変更があります'; }
   function draw() {
     const focusId = document.activeElement && document.activeElement.id;
-    body.replaceChildren();
+    fill(body);
     const dateIn = h('input', { class: 'in', type: 'date', id: 'tr-date', value: d.date, max: today(), onchange: (e) => { d.date = e.target.value; changed(); } });
     body.append(h('label', { class: 'field', for: 'tr-date', style: 'margin-bottom:10px' }, h('span', {}, '日付'), dateIn));
     body.append(h('div', { class: 'chips', role: 'group', 'aria-label': '部位で絞り込み', style: 'margin-bottom:10px' },
@@ -726,7 +741,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
         const nq = norm(query);
         const pool = EXERCISES.concat(store.customExercises());
         const list = pool.filter((x) => (!nq ? x.part === d.filter : true) && (!nq || norm(x.name).includes(nq) || x.alias.some((a) => norm(a).includes(nq))));
-        res.replaceChildren(...list.map((x) => h('li', {}, h('button', { onclick: () => addEntry(x) }, x.name, h('small', {}, (x.custom ? '自分・' : '') + PART_FILTERS.find((p) => p.id === x.part).name)))));
+        fill(res, ...list.map((x) => h('li', {}, h('button', { onclick: () => addEntry(x) }, x.name, h('small', {}, (x.custom ? '自分・' : '') + PART_FILTERS.find((p) => p.id === x.part).name)))));
         if (!list.length) res.append(h('li', { class: 'muted small', style: 'padding:10px 12px' }, '見つかりません。下の「自分の種目を追加」から登録できます。'));
         drawAdd();
       }
@@ -734,7 +749,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
       let adding = false;
       const METHOD_NAMES = [['wr', '重量×回数'], ['bw', '自重（回数）'], ['assist', 'アシスト'], ['time', '時間（秒）']];
       function drawAdd() {
-        addBox.replaceChildren();
+        fill(addBox);
         if (!adding) {
           addBox.append(h('button', { class: 'btn block', style: 'margin-top:8px', onclick: () => { adding = true; drawAdd(); addBox.querySelector('input')?.focus(); } },
             query.trim() ? `＋「${query.trim().slice(0, 30)}」を自分の種目として追加` : '＋ 自分の種目を追加'));
@@ -746,8 +761,8 @@ function trainingForm({ inSheet, editId, onSaved }) {
         const partChips = h('div', { class: 'chips' });
         const methodChips = h('div', { class: 'chips' });
         const paint = () => {
-          partChips.replaceChildren(...PART_FILTERS.map((p) => h('button', { 'aria-pressed': String(def.part === p.id), onclick: () => { def.part = p.id; if (p.id === 'cardio') def.method = 'cardio'; else if (def.method === 'cardio') def.method = 'wr'; paint(); } }, p.name)));
-          methodChips.replaceChildren(...(def.part === 'cardio' ? [['cardio', '時間（分）・距離']] : METHOD_NAMES).map(([k, n]) => h('button', { 'aria-pressed': String(def.method === k), onclick: () => { def.method = k; paint(); } }, n)));
+          fill(partChips, ...PART_FILTERS.map((p) => h('button', { 'aria-pressed': String(def.part === p.id), onclick: () => { def.part = p.id; if (p.id === 'cardio') def.method = 'cardio'; else if (def.method === 'cardio') def.method = 'wr'; paint(); } }, p.name)));
+          fill(methodChips, ...(def.part === 'cardio' ? [['cardio', '時間（分）・距離']] : METHOD_NAMES).map(([k, n]) => h('button', { 'aria-pressed': String(def.method === k), onclick: () => { def.method = k; paint(); } }, n)));
         };
         paint();
         addBox.append(h('div', { class: 'card stack', style: 'margin-top:8px;background:#1a1d21' },
@@ -776,13 +791,8 @@ function trainingForm({ inSheet, editId, onSaved }) {
 
     body.append(timerCard());
 
-    const cid = 'tr-comment';
-    body.append(h('div', { class: 'card', style: 'margin-top:12px' },
-      h('label', { class: 'field', for: cid }, h('span', {}, '今日のひとこと（任意・40文字まで）'),
-        h('textarea', { class: 'in', id: cid, rows: 2, maxlength: 40, oninput: (e) => { d.comment = e.target.value; changed(); cnt.textContent = `${[...d.comment].length}/40`; } }, d.comment)),
-      h('div', { class: 'small', style: 'display:flex;justify-content:space-between;margin-top:4px' },
-        h('span', { class: state.privacy.join ? 'muted' : 'err' }, state.privacy.join ? '共有ジムの全員に表示されます' : 'ジム非公開のため、ひとことは表示されません'),
-        (cnt = h('span', { class: 'muted' }, `${[...d.comment].length}/40`)))));
+    // ひとことはジムの「ひとこと」ボタンから投稿する（依頼者指示で記録画面のコメント欄は置かない）
+    body.append(h('p', { class: 'small muted', style: 'margin:12px 0 0' }, 'ひとことは、ジムの「ひとこと」ボタンから投稿できます。'));
     if (errors.form) body.append(h('p', { class: 'err', role: 'alert' }, errors.form));
     if (focusId) document.getElementById(focusId)?.focus();
   }
@@ -874,7 +884,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
     }
     const btns = h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;width:100%' });
     function drawBtns() {
-      btns.replaceChildren(
+      fill(btns, 
         ...[30, 60, 90, 120, 180].map((sec) => h('button', { class: 'btn', style: 'min-height:40px;padding:0 10px', 'aria-pressed': String(timer.preset === sec),
           onclick: () => { timer.preset = sec; timer.running = false; timer.remain = sec; try { localStorage.setItem('kmg2.demo.timer', sec); } catch (e) {} stateLbl.textContent = ''; paint(); drawBtns(); } }, `${sec}秒`)),
         h('button', { class: 'btn primary', style: 'min-height:40px', onclick: () => {
@@ -1008,10 +1018,10 @@ function renderRecord() {
   const host = h('div');
   view.append(h('div', { class: 'pad', style: 'padding-bottom:0' }, seg), host);
   function draw() {
-    seg.replaceChildren(
+    fill(seg, 
       h('button', { role: 'tab', 'aria-selected': String(state.recordTab === 'training'), onclick: () => { state.recordTab = 'training'; persist(); draw(); } }, 'トレーニング'),
       h('button', { role: 'tab', 'aria-selected': String(state.recordTab === 'body'), onclick: () => { state.recordTab = 'body'; persist(); draw(); } }, 'からだ'));
-    host.replaceChildren();
+    fill(host);
     if (state.recordTab === 'training') {
       const { body, foot } = trainingForm({ inSheet: false });
       foot.style.position = 'sticky';
@@ -1106,7 +1116,7 @@ function renderHistory() {
     const [, , days] = PERIODS.find((x) => x[0] === histPeriod);
     const from = days ? store.ymd(new Date(Date.now() - (days - 1) * 86400e3)) : '0000-00-00';
     const to = today();
-    box.replaceChildren(
+    fill(box, 
       h('div', { class: 'seg', role: 'tablist' }, ...[['training', 'トレーニング'], ['weight', '体重'], ['kcal', 'カロリー'], ['pfc', 'PFC']].map(([k, n]) =>
         h('button', { role: 'tab', 'aria-selected': String(histTab === k), onclick: () => { histTab = k; draw(); } }, n))),
       h('div', { class: 'chips' }, ...PERIODS.map(([k, n]) => h('button', { 'aria-pressed': String(histPeriod === k), onclick: () => { histPeriod = k; draw(); } }, n))),
@@ -1301,14 +1311,14 @@ function dressPanel(look, onChange, { titles = true, titleState } = {}) {
   const gr = growth();
   const unlockedBand = gr.days >= 7;
   function drawPreview() {
-    preview.replaceChildren(charEl({ ...look, stages: stagesFromExp(gr.exp) }, 'detail', { label: '着せ替えのプレビュー' }));
+    fill(preview, charEl({ ...look, stages: stagesFromExp(gr.exp) }, 'detail', { label: '着せ替えのプレビュー' }));
   }
   function set(k, v) { look[k] = v; onChange(); drawPreview(); drawPanel(); }
   const sw = (list, key, colorOf) => h('div', { class: 'swatches' }, ...list.map((c) => h('button', { class: 'sw', 'aria-pressed': String(look[key] === c.id), onclick: () => set(key, c.id) }, h('i', { style: `background:${colorOf(c)}` }), c.name)));
   function drawPanel() {
     const T = [['hair', '髪'], ['face', '表情'], ['skin', '肌'], ['wear', 'ウェア']].concat(titles ? [['title', '称号']] : []);
-    tabs.replaceChildren(...T.map(([k, n]) => h('button', { role: 'tab', 'aria-selected': String(tab === k), onclick: () => { tab = k; drawPanel(); } }, n)));
-    panel.replaceChildren();
+    fill(tabs, ...T.map(([k, n]) => h('button', { role: 'tab', 'aria-selected': String(tab === k), onclick: () => { tab = k; drawPanel(); } }, n)));
+    fill(panel);
     if (tab === 'hair') {
       panel.append(h('div', { class: 'dress-sub' }, '髪型'),
         h('div', { class: 'opt-grid' }, ...HAIR_STYLES.map((s) => h('button', { class: 'opt', 'aria-pressed': String(look.hairStyle === s.id), onclick: () => set('hairStyle', s.id) }, headThumb({ ...look, hairStyle: s.id }), s.name))),
@@ -1445,7 +1455,7 @@ function renderCharacterSettings() {
   view.append(box);
   function draw() {
     const look = myLook();
-    box.replaceChildren(
+    fill(box, 
       h('h2', { class: 'sec' }, 'キャラクタータイプ'),
       h('div', { class: 'seg', role: 'group', 'aria-label': 'タイプ' },
         ...[['male', '男性'], ['female', '女性']].map(([t, n]) => h('button', { 'aria-pressed': String(next === t), onclick: () => { next = t; draw(); } }, n))),
@@ -1477,7 +1487,7 @@ function renderAuth() {
   const wrap = h('div', { class: 'onb' });
   view.append(wrap);
   function draw(msg = '', bad = false) {
-    wrap.replaceChildren();
+    fill(wrap);
     const hero = h('div', { class: 'onb-hero' },
       charEl({ ...DEFAULT_LOOK, ...typeDefaults('male'), type: 'male' }, 'gym', { label: '男性キャラクター' }),
       charEl({ ...DEFAULT_LOOK, ...typeDefaults('female'), type: 'female' }, 'gym', { label: '女性キャラクター' }),

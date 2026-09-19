@@ -183,9 +183,9 @@ canvas.px { image-rendering: pixelated; image-rendering: crisp-edges; display: b
 .gym-empty { position: absolute; left: 16px; right: 16px; top: 45%; transform: translateY(-50%); background: rgba(20,22,25,.88); border: 1px solid var(--border); border-radius: 12px; }
 
 /* 参加者詳細 */
-.member { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: start; }
-.member .portrait { width: 96px; height: 96px; background: #1a1d21; border: 1px solid var(--border); border-radius: 10px; display: grid; place-items: center; overflow: hidden; }
-.member .portrait canvas { width: 96px; height: 96px; }
+.member { display: grid; grid-template-columns: 132px 1fr; gap: 12px; align-items: start; }
+.member .portrait { width: 132px; height: 132px; background: #1a1d21; border: 1px solid var(--border); border-radius: 10px; display: grid; place-items: center; overflow: hidden; }
+/* 絵の大きさは画素比に合わせて charEl(fit) が決める */
 .member h3 { margin: 0; font-size: 18px; }
 .menu-list { list-style: none; margin: 0; padding: 0; }
 .menu-list li { display: grid; grid-template-columns: 56px 1fr; gap: 8px; padding: 8px 0; border-bottom: 1px solid #333a42; }
