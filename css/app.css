@@ -297,3 +297,11 @@ table.sets tr.done input.in { border-color: #2c6e66; background: #16302d; }
   body { padding: 0; }
   .app { box-shadow: 0 0 0 1px #262a30; }
 }
+
+/* 履歴 */
+.hist-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid #333a42; padding: 8px 0; margin-top: 8px; color: var(--text); }
+.hist-row { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center; padding: 3px 0; }
+.hist-row small { grid-column: 2; }
+.chart svg { display: block; }
+.pfc-bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: 8px 0; }
+.pfc-bar i { display: block; height: 100%; }

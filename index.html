@@ -4,7 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#141619">
-<title>筋肉モリモリジム（見本）</title>
+<title>筋肉モリモリジム</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="モリモリジム">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
@@ -12,7 +17,7 @@
 </head>
 <body>
 <div id="app" class="app">
-  <div class="demo-bar" role="note">見本（Phase 1）・架空データ・保存はこの端末の見本用のみ</div>
+  <div class="demo-bar" role="note">ベータ版：記録はこの端末に保存・ジムの他の人は見本</div>
   <header class="top" id="top" hidden>
     <button class="icon-btn" id="btn-back" aria-label="戻る" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg></button>
     <h1 class="logo" id="top-title"><span class="logo-text">筋肉モリモリジム</span></h1>
@@ -29,5 +34,9 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </div>
 <script type="module" src="js/app/main.js"></script>
+<script>
+  // ホーム画面に追加して、オフラインでも開けるようにする
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
 </body>
 </html>

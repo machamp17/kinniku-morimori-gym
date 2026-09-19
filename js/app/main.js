@@ -1,5 +1,5 @@
-// 筋肉モリモリジム Phase 1 見本。認証・クラウド保存は未実装（Phase 2）。
-// 見本の状態だけを localStorage 'kmg2.demo.*' に置く（旧版の 'kmg.*' には触れない）。
+// 筋肉モリモリジム ベータ（この端末に保存）。認証・クラウド保存は Phase 2。
+// 設定・見た目は 'kmg2.demo.*'、記録は store.js（'kmg2.data.v1'）。旧版の 'kmg.*' には触れない。
 
 import { characterCanvas, stageOf, DEFAULT_LOOK, FACES } from '../art/character.js';
 import { SKINS, HAIR_COLORS, HAIR_STYLES, CLOTH_COLORS, TOPS, BOTTOMS } from '../art/palette.js';
@@ -8,6 +8,7 @@ import {
   levelOf, demoMembers, agoLabel,
 } from './data.js';
 import { mountLogo } from './logo.js';
+import * as store from './store.js';
 
 /* ---------- 状態 ---------- */
 const KEY = 'kmg2.demo.state';
@@ -17,7 +18,8 @@ const fresh = () => ({
   onboarded: false,
   profile: { name: '', look: { ...DEFAULT_LOOK, stages: undefined, frame: undefined }, title: 't_first' },
   privacy: { join: false, name: false, content: false },
-  demo: { growth: 'mid', members: 23, failSave: false, reduceMotion: false },
+  demo: { growth: 'real', members: 12, failSave: false, reduceMotion: false },
+  dataVersion: 3,
   recordTab: 'training',
 });
 function load() {
@@ -28,6 +30,12 @@ function load() {
       if ((s.lookVersion || 1) < 2) {
         s.profile.look.top = 'tank';
         s.lookVersion = 2;
+        try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {}
+      }
+      // ベータ化: 成長は実データ表示を初期にする（一度だけ）
+      if ((s.dataVersion || 1) < 3) {
+        s.demo = { ...(s.demo || {}), growth: 'real', failSave: false };
+        s.dataVersion = 3;
         try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {}
       }
       const f = fresh();
@@ -48,7 +56,16 @@ function persist() {
 }
 
 const reduceMotion = () => state.demo.reduceMotion || matchMedia('(prefers-reduced-motion: reduce)').matches;
-const growth = () => GROWTH_PRESETS[state.demo.growth] || GROWTH_PRESETS.mid;
+// 成長の元データ。通常は保存した記録から計算。設定で見本の段階も表示できる
+function growth() {
+  const p = GROWTH_PRESETS[state.demo.growth];
+  if (p) {
+    const total = Object.values(p.exp).reduce((a, b) => a + b, 0) + p.days * 10;
+    return { ...p, total, week: Math.min(3, p.days), preview: true };
+  }
+  const x = store.expSummary();
+  return { name: '実データ', exp: x.exp, days: x.days, total: x.total, week: x.week, preview: false };
+}
 function stagesFromExp(exp) {
   const st = {};
   for (const p of PARTS) st[p.id] = stageOf(p.id, levelOf(exp[p.id] || 0).lv);
@@ -373,10 +390,14 @@ const POSTERS = [['昨日の自分を', '超えよう'], ['続けた分だけ、
 
 function renderGym() {
   const members = demoMembers(state.demo.members);
-  if (state.privacy.join) {
+  // 自分: 公開ONで、直近24時間に保存した記録（当日か前日の分）がある時だけ表示
+  const mine = store.listWorkouts().filter((w) => Date.now() - w.createdAt < 24 * 3600e3 && w.date >= store.ymd(new Date(Date.now() - 86400e3)))
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
+  if (state.privacy.join && mine) {
     members.unshift({
       id: 'me', me: true, name: state.profile.name, nameVisible: state.privacy.name, contentVisible: state.privacy.content,
-      title: titleName(state.profile.title), recordedMinAgo: 0, comment: null, menu: [['肩', 'サイドレイズ', '8kg × 15回 × 3']], nice: 0,
+      title: titleName(state.profile.title), recordedMinAgo: Math.floor((Date.now() - mine.createdAt) / 60000), comment: mine.comment || null,
+      menu: mine.entries.map((en) => { const ex = EXERCISES.find((x) => x.id === en.exId); return [PART_FILTERS.find((q) => q.id === ex.part).name, ex.name, setsSummary(ex, en.sets)]; }), nice: 0,
       look: myLook(),
     });
   }
@@ -510,7 +531,10 @@ function renderGym() {
     }
     draw();
   }
-  if (!state.privacy.join) info.after(h('p', { class: 'muted small', style: 'padding:0 16px;margin:0' }, 'あなたは非公開です（ジムには表示されません）。設定の公開設定で変更できます。'));
+  info.after(h('p', { class: 'muted small', style: 'padding:0 16px;margin:0' },
+    !state.privacy.join ? 'あなたは非公開です（ジムには表示されません）。設定の公開設定で変更できます。'
+      : !mine ? '記録を保存すると、24時間あなたがジムに表示されます。' : '',
+    ' ほかの人は見本（架空）です。本物の共有ジムは今後作ります。'));
 }
 
 /* ============================================================
@@ -545,17 +569,33 @@ const timer = { preset: 60, endAt: 0, remain: 60, running: false };
 try { Object.assign(timer, { preset: Number(localStorage.getItem('kmg2.demo.timer')) || 60 }); timer.remain = timer.preset; } catch (e) {}
 function timerRemain() { return timer.running ? Math.max(0, Math.ceil((timer.endAt - Date.now()) / 1000)) : timer.remain; }
 
-function trainingForm({ inSheet }) {
-  const d = loadDraft();
+// セットの要約（例: 60kg×10 / 60kg×9）
+function setsSummary(ex, sets) {
+  const f = (x) => ({
+    wr: `${x.kg}kg×${x.reps}`,
+    bw: `${x.reps}回${x.addKg ? `(+${x.addKg}kg)` : ''}`,
+    assist: `補助${x.assistKg}kg×${x.reps}`,
+    time: `${x.sec}秒`,
+    cardio: `${x.min}分${x.km ? ` ${x.km}km` : ''}`,
+  })[ex.method];
+  return sets.map(f).join(' / ');
+}
+
+// editId: 保存済み記録の編集
+function trainingForm({ inSheet, editId, onSaved }) {
+  const editing = editId ? store.getWorkout(editId) : null;
+  const d = editing
+    ? { date: editing.date, filter: 'chest', comment: editing.comment || '', entries: JSON.parse(JSON.stringify(editing.entries)).map((en) => ({ ...en, sets: en.sets.map((x) => ({ ...x, done: true })) })) }
+    : loadDraft();
   const body = h('div', { class: inSheet ? 'sheet-body' : 'pad' });
   const status = h('span', { class: 'sync', 'aria-live': 'polite' }, d.entries.length ? '下書き保存済み（この端末）' : '');
-  const saveBtn = h('button', { class: 'btn primary lg', style: 'flex:1' }, '記録を保存');
+  const saveBtn = h('button', { class: 'btn primary lg', style: 'flex:1' }, editing ? '変更を保存' : '記録を保存');
   const foot = h('div', { class: 'sheet-foot' }, h('div', { style: 'flex:1;min-width:0' }, status), saveBtn);
   const errors = {};
   let query = '';
   let searchOpen = !d.entries.length;
 
-  function changed() { saveDraftSoon(d, status); }
+  function changed() { if (!editing) saveDraftSoon(d, status); else status.textContent = '未保存の変更があります'; }
   function draw() {
     const focusId = document.activeElement && document.activeElement.id;
     body.replaceChildren();
@@ -576,7 +616,7 @@ function trainingForm({ inSheet }) {
         const nq = norm(query);
         const list = EXERCISES.filter((x) => (!nq ? x.part === d.filter : true) && (!nq || norm(x.name).includes(nq) || x.alias.some((a) => norm(a).includes(nq))));
         res.replaceChildren(...list.map((x) => h('li', {}, h('button', { onclick: () => addEntry(x) }, x.name, h('small', {}, PART_FILTERS.find((p) => p.id === x.part).name)))));
-        if (!list.length) res.append(h('li', { class: 'muted small', style: 'padding:10px 12px' }, '見つかりません。本人用の種目追加は Phase 2 で実装します。'));
+        if (!list.length) res.append(h('li', { class: 'muted small', style: 'padding:10px 12px' }, '見つかりません。自分用の種目の追加は今後対応します。'));
       }
       drawResults();
       box.append(h('label', { class: 'field', for: 'ex-q' }, h('span', {}, '種目を追加'), q), res);
@@ -610,15 +650,15 @@ function trainingForm({ inSheet }) {
   function entryCard(en) {
     const ex = EXERCISES.find((x) => x.id === en.exId);
     const cols = METHOD_COLS[ex.method];
-    const prev = DEMO_PREVIOUS[en.exId];
+    const prev = store.previousFor(en.exId, d.date, editId);
     const card = h('div', { class: 'ex-card' });
     card.append(h('div', { class: 'ex-top' },
       h('h3', {}, ex.name),
       h('span', { class: 'pill' }, PART_FILTERS.find((p) => p.id === ex.part).name),
       h('button', { class: 'del', 'aria-label': `${ex.name}を削除`, onclick: () => { const i = d.entries.indexOf(en); d.entries.splice(i, 1); changed(); draw(); toast('種目を削除しました', false, { label: '取り消す', fn: () => { d.entries.splice(i, 0, en); changed(); draw(); } }); } }, '×')));
     if (prev) {
-      const sum = prev.sets.map((s) => `${s.kg}kg×${s.reps}`).join(' / ');
-      card.append(h('div', { class: 'prev' }, h('span', {}, `前回（${prev.date}・見本）${sum}`),
+      const sum = setsSummary(ex, prev.sets);
+      card.append(h('div', { class: 'prev' }, h('span', {}, `前回（${prev.date.slice(5).replace('-', '/')}）${sum}`),
         h('button', { class: 'btn', style: 'min-height:36px;flex:none', onclick: () => copyPrev(en, prev) }, '前回をコピー')));
     }
     const table = h('table', { class: 'sets' });
@@ -663,11 +703,12 @@ function trainingForm({ inSheet }) {
         { label: 'キャンセル', value: null }, { label: '追加', value: 'add' }, { label: '置き換え', value: 'replace', primary: true }]);
       if (!mode) return;
     }
-    const copies = prev.sets.map((s) => ({ id: uid(), kg: String(s.kg), reps: String(s.reps), done: false }));
+    // 新しいIDで値だけを写す（完了はオフ）
+    const copies = prev.sets.map(copySet);
     en.sets = mode === 'add' ? en.sets.concat(copies) : copies;
     changed();
     draw();
-    toast(`${prev.date}の記録をコピーしました（完了はオフ）`);
+    toast(`${prev.date.slice(5).replace('-', '/')}の記録をコピーしました（完了はオフ）`);
   }
 
   function timerCard() {
@@ -697,7 +738,7 @@ function trainingForm({ inSheet }) {
       );
     }
     drawBtns();
-    card.append(h('b', {}, '休憩'), t, stateLbl, btns, h('span', { class: 'small muted' }, '音・通知は見本では未対応です（画面表示のみ）'));
+    card.append(h('b', {}, '休憩'), t, stateLbl, btns, h('span', { class: 'small muted' }, '音・通知はまだ出ません（画面表示のみ）'));
     paint();
     const iv = setInterval(() => { if (!card.isConnected) return clearInterval(iv); paint(); }, 250);
     return card;
@@ -728,22 +769,49 @@ function trainingForm({ inSheet }) {
     });
     if (Object.keys(errors).length) { errors.form = '入力を確認してください（他の入力はそのままです）'; draw(); return; }
     if (!valid) { errors.form = '完了チェックの付いたセットが1つ以上必要です'; draw(); return; }
-    const txt = Object.entries(gained).map(([p, v]) => `${PARTS.find((x) => x.id === p).name} +${v}EXP`).join('・');
-    try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
-    toast(`見本のため保存はされません（${txt || '継続'} +10ボーナス 相当）`);
-    Object.assign(d, { date: today(), entries: [], comment: '' });
-    searchOpen = true;
-    draw();
-    status.textContent = '';
+    if (d.date > today()) { errors.form = '未来の日付には記録できません'; draw(); return; }
+    const { gain, bonus } = store.expGainOf(d.entries, d.date, editId);
+    const saved = store.saveWorkout({ id: editId, date: d.date, entries: d.entries, comment: d.comment });
+    if (!saved) { errors.form = 'この端末に保存できませんでした（容量不足の可能性）。入力はそのまま残っています'; draw(); return; }
+    const txt = Object.entries(gain).map(([q, v]) => `${PARTS.find((x) => x.id === q).name} +${v}EXP`).concat(bonus ? [`継続 +${bonus}EXP`] : []).join('・');
+    const dropped = d.entries.some((en) => en.sets.some((x) => !x.done));
+    if (editing) {
+      toast('変更を保存しました');
+    } else {
+      try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+      toast(`保存しました${txt ? '・' + txt : ''}${dropped ? '（未完了のセットは保存していません）' : ''}`);
+      Object.assign(d, { date: today(), entries: [], comment: '' });
+      searchOpen = true;
+      status.textContent = '';
+      draw();
+    }
+    if (onSaved) onSaved(saved);
   };
 
   draw();
   return { body, foot };
 }
 
-function openTrainingSheet() {
-  const { body, foot } = trainingForm({ inSheet: true });
-  openSheet({ title: 'トレーニングを記録', body, foot });
+function openTrainingSheet({ editId } = {}) {
+  let sh = null;
+  const { body, foot } = trainingForm({ inSheet: true, editId, onSaved: () => { if (sh) sh.close(); route(); } });
+  sh = openSheet({ title: editId ? '記録を編集' : 'トレーニングを記録', body, foot, full: !!editId });
+}
+const copySet = ({ id, done, ...vals }) => ({ ...Object.fromEntries(Object.entries(vals).map(([k, v]) => [k, v == null ? '' : String(v)])), id: uid(), done: false });
+// 保存済みのメニューを今日の下書きへコピー（新しいID・完了オフ・コメントはコピーしない）
+async function copyMenuToDraft(w) {
+  const cur = loadDraft();
+  let mode = 'replace';
+  if (cur.entries.length) {
+    mode = await confirmDialog('メニューをコピー', '書きかけの記録があります。どうしますか？', [
+      { label: 'キャンセル', value: null }, { label: '追加', value: 'add' }, { label: '置き換え', value: 'replace', primary: true }]);
+    if (!mode) return;
+  }
+  const copied = w.entries.map((en) => ({ id: uid(), exId: en.exId, sets: en.sets.map(copySet) }));
+  const next = { date: today(), filter: cur.filter, comment: mode === 'add' ? cur.comment : '', entries: mode === 'add' ? cur.entries.concat(copied) : copied };
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(next)); } catch (e) {}
+  openTrainingSheet();
+  toast(`${w.date.slice(5).replace('-', '/')}のメニューをコピーしました（完了はオフ）`);
 }
 
 /* ============================================================
@@ -772,8 +840,11 @@ function bodyForm() {
   const wrap = h('div', { class: 'pad stack' });
   const v = { date: today(), weight: '', kcal: '', p: '', f: '', c: '' };
   const err = h('p', { class: 'err', role: 'alert' });
+  const saved = h('p', { class: 'small muted', style: 'margin:0' });
   let pfcOpen = false;
   const w = h('input', { class: 'in', id: 'bw', inputmode: 'decimal', placeholder: '未記録', 'aria-label': '体重（kg）', oninput: (e) => (v.weight = e.target.value) });
+  const kcal = h('input', { class: 'in', id: 'kcal', inputmode: 'numeric', placeholder: '未記録', style: 'font-size:22px;font-weight:800;text-align:center', oninput: (e) => (v.kcal = e.target.value) });
+  const pin = {};
   const stepW = (d) => {
     // 空欄の時は前回値を勝手に使わない（前回値は明示ボタンでのみ入れる）
     if (v.weight === '') { err.textContent = '先に体重を入力するか「前回を入れる」を押してください'; w.focus(); return; }
@@ -786,39 +857,214 @@ function bodyForm() {
   const pfc = h('div', { class: 'card', hidden: true });
   ['p', 'f', 'c'].forEach((k) => {
     const id = 'pfc-' + k;
-    pfc.append(h('label', { class: 'field', for: id, style: 'margin-bottom:8px' }, h('span', {}, { p: 'たんぱく質 P（g）', f: '脂質 F（g）', c: '炭水化物 C（g）' }[k]),
-      h('input', { class: 'in', id, inputmode: 'decimal', placeholder: '未記録', oninput: (e) => (v[k] = e.target.value) })));
+    pin[k] = h('input', { class: 'in', id, inputmode: 'decimal', placeholder: '未記録', oninput: (e) => (v[k] = e.target.value) });
+    pfc.append(h('label', { class: 'field', for: id, style: 'margin-bottom:8px' }, h('span', {}, { p: 'たんぱく質 P（g）', f: '脂質 F（g）', c: '炭水化物 C（g）' }[k]), pin[k]));
   });
   const pfcBtn = h('button', { class: 'btn block', 'aria-expanded': 'false', onclick: () => { pfcOpen = !pfcOpen; pfc.hidden = !pfcOpen; pfcBtn.setAttribute('aria-expanded', String(pfcOpen)); pfcBtn.textContent = pfcOpen ? 'PFC を閉じる' : 'PFC を入力（任意）'; } }, 'PFC を入力（任意）');
+  const prevBtn = h('button', { class: 'btn', style: 'min-height:36px' });
+  // その日の保存済みの値を入れる（朝の体重に夜カロリーを追記しても体重が残る）
+  function loadDate() {
+    const r = store.getBody(v.date) || {};
+    const str = (x) => (x == null ? '' : String(x));
+    Object.assign(v, { weight: r.weight != null ? Number(r.weight).toFixed(1) : '', kcal: str(r.kcal), p: str(r.p), f: str(r.f), c: str(r.c) });
+    w.value = v.weight; kcal.value = v.kcal; ['p', 'f', 'c'].forEach((k) => (pin[k].value = v[k]));
+    if (v.p || v.f || v.c) { pfcOpen = false; pfcBtn.click(); }
+    const prev = store.listBody().filter((x) => x.date < v.date && x.weight != null).pop();
+    prevBtn.hidden = !prev;
+    if (prev) {
+      prevBtn.textContent = `前回 ${Number(prev.weight).toFixed(1)}kg を入れる`;
+      prevBtn.onclick = () => { v.weight = Number(prev.weight).toFixed(1); w.value = v.weight; };
+    }
+    saved.textContent = r.updatedAt ? `この日の記録は保存済み（${new Date(r.updatedAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}）。変更して保存し直せます` : '';
+  }
   wrap.append(
-    h('label', { class: 'field', for: 'bd-date' }, h('span', {}, '日付'), h('input', { class: 'in', type: 'date', id: 'bd-date', value: v.date, max: today(), onchange: (e) => (v.date = e.target.value) })),
+    h('label', { class: 'field', for: 'bd-date' }, h('span', {}, '日付'), h('input', { class: 'in', type: 'date', id: 'bd-date', value: v.date, max: today(), onchange: (e) => { v.date = e.target.value; loadDate(); } })),
+    saved,
     h('div', { class: 'card' },
-      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, h('b', {}, '体重'),
-        h('button', { class: 'btn', style: 'min-height:36px', onclick: () => { v.weight = '70.8'; w.value = '70.8'; } }, '前回 70.8kg を入れる（見本）')),
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, h('b', {}, '体重'), prevBtn),
       h('div', { class: 'big-num' }, h('button', { class: 'btn step', 'aria-label': '0.1kg減らす', onclick: () => stepW(-1) }, '−0.1'), w, h('span', { class: 'unit' }, 'kg'), h('button', { class: 'btn step', 'aria-label': '0.1kg増やす', onclick: () => stepW(1) }, '+0.1'))),
-    h('div', { class: 'card' },
-      h('label', { class: 'field', for: 'kcal' }, h('span', {}, '摂取カロリー（kcal）'),
-        h('input', { class: 'in', id: 'kcal', inputmode: 'numeric', placeholder: '未記録', style: 'font-size:22px;font-weight:800;text-align:center', oninput: (e) => (v.kcal = e.target.value) }))),
+    h('div', { class: 'card' }, h('label', { class: 'field', for: 'kcal' }, h('span', {}, '摂取カロリー（kcal）'), kcal)),
     pfcBtn, pfc, err,
     h('p', { class: 'muted small', style: 'margin:0' }, 'すべて任意です。空欄は「未記録」、0は「0を入力」として区別します。からだ記録は他の人に公開されません。'),
     h('button', { class: 'btn primary lg block', onclick: () => {
       err.textContent = '';
-      const chk = (s, int, pos) => (s === '' ? null : /^\d+(\.\d)?$/.test(s) && (!int || /^\d+$/.test(s)) && isFinite(Number(s)) && (!pos || Number(s) > 0) && s.length <= 7 ? Number(s) : NaN);
+      const chk = (x, int, pos) => (x === '' ? null : /^\d+(\.\d)?$/.test(x) && (!int || /^\d+$/.test(x)) && isFinite(Number(x)) && (!pos || Number(x) > 0) && x.length <= 7 ? Number(x) : NaN);
       const vals = { weight: chk(v.weight, false, true), kcal: chk(v.kcal, true), p: chk(v.p), f: chk(v.f), c: chk(v.c) };
       if (Object.values(vals).some((x) => Number.isNaN(x))) { err.textContent = '体重は正の数（小数1桁まで）、kcalは0以上の整数、PFCは0以上（小数1桁まで）で入力してください'; return; }
-      if (Object.values(vals).every((x) => x === null)) { err.textContent = '入力がありません（全て空欄の記録は保存しません）'; return; }
-      toast('見本のため保存はされません（Phase 2 でクラウド保存）');
+      const had = store.getBody(v.date);
+      if (!had && Object.values(vals).every((x) => x === null)) { err.textContent = '入力がありません（全て空欄の記録は保存しません）'; return; }
+      // 空欄にした項目は「未記録」に戻す（保存済みの日を編集した時）
+      const fields = {};
+      for (const [k, x] of Object.entries(vals)) if (x !== null || (had && had[k] != null)) fields[k] = x;
+      if (!store.upsertBody(v.date, fields)) { err.textContent = 'この端末に保存できませんでした。入力はそのまま残っています'; return; }
+      toast('保存しました（この端末）');
+      loadDate();
     } }, '保存'),
   );
+  loadDate();
   return wrap;
 }
 
 /* ============================================================
- * 履歴（Phase 2 で実装）
+ * 履歴・グラフ
  * ============================================================ */
+const PERIODS = [['1m', '1ヶ月', 30], ['3m', '3ヶ月', 91], ['6m', '6ヶ月', 182], ['1y', '1年', 365], ['all', '全期間', 0]];
+let histTab = 'training';
+let histPeriod = '1m';
+const md = (d) => d.slice(5).replace('-', '/');
+
 function renderHistory() {
-  view.append(h('div', { class: 'empty' }, h('b', {}, '履歴・グラフは Phase 2 で実装します'),
-    '実データのない架空のグラフは表示しません。記録の保存（クラウド）とあわせて作ります。'));
+  const box = h('div', { class: 'pad stack' });
+  view.append(box);
+  function draw() {
+    const [, , days] = PERIODS.find((x) => x[0] === histPeriod);
+    const from = days ? store.ymd(new Date(Date.now() - (days - 1) * 86400e3)) : '0000-00-00';
+    const to = today();
+    box.replaceChildren(
+      h('div', { class: 'seg', role: 'tablist' }, ...[['training', 'トレーニング'], ['weight', '体重'], ['kcal', 'カロリー'], ['pfc', 'PFC']].map(([k, n]) =>
+        h('button', { role: 'tab', 'aria-selected': String(histTab === k), onclick: () => { histTab = k; draw(); } }, n))),
+      h('div', { class: 'chips' }, ...PERIODS.map(([k, n]) => h('button', { 'aria-pressed': String(histPeriod === k), onclick: () => { histPeriod = k; draw(); } }, n))),
+      h('p', { class: 'small muted', style: 'margin:0' }, days ? `${md(from)} 〜 ${md(to)}` : '全期間'),
+    );
+    if (histTab === 'training') box.append(...trainingHistory(from, to));
+    else box.append(...bodyHistory(histTab, from, to));
+  }
+  draw();
+  cleanup.push(() => {});
+}
+
+function trainingHistory(from, to) {
+  const list = store.listWorkouts().filter((w) => w.date >= from && w.date <= to);
+  if (!list.length) return [h('div', { class: 'empty' }, h('b', {}, 'この期間の記録はありません'), '記録タブかジムの「トレーニングを記録」から保存できます。')];
+  const byDate = {};
+  list.forEach((w) => (byDate[w.date] = byDate[w.date] || []).push(w));
+  return Object.entries(byDate).map(([date, ws]) => h('div', { class: 'card' },
+    h('b', {}, `${md(date)}（${'日月火水木金土'[new Date(date + 'T00:00').getDay()]}）`),
+    ...ws.map((w) => h('button', { class: 'hist-item', onclick: () => openWorkoutDetail(w) },
+      ...w.entries.map((en) => {
+        const ex = EXERCISES.find((x) => x.id === en.exId);
+        return h('div', { class: 'hist-row' }, h('span', { class: 'pill' }, PART_FILTERS.find((q) => q.id === ex.part).name), h('span', {}, ex.name), h('small', { class: 'muted' }, setsSummary(ex, en.sets)));
+      }),
+      w.comment ? h('div', { class: 'small muted' }, '「' + w.comment + '」') : null))));
+}
+
+function openWorkoutDetail(w) {
+  const body = h('div', { class: 'sheet-body' },
+    ...w.entries.map((en) => {
+      const ex = EXERCISES.find((x) => x.id === en.exId);
+      return h('div', { class: 'card', style: 'margin-bottom:8px' }, h('b', {}, ex.name), h('div', { class: 'small muted' }, setsSummary(ex, en.sets)));
+    }),
+    w.comment ? h('p', { class: 'small' }, 'ひとこと: ' + w.comment) : null,
+    h('p', { class: 'small muted' }, `保存 ${new Date(w.createdAt).toLocaleString('ja-JP')}${w.updatedAt !== w.createdAt ? ` ／ 更新 ${new Date(w.updatedAt).toLocaleString('ja-JP')}` : ''}`));
+  const foot = h('div', { class: 'sheet-foot', style: 'flex-wrap:wrap' });
+  const sh = openSheet({ title: `${md(w.date)} の記録`, body, foot, expandable: false });
+  sh.sheet.style.height = 'auto';
+  sh.sheet.style.maxHeight = '85dvh';
+  foot.append(
+    h('button', { class: 'btn primary', style: 'flex:1', onclick: () => { sh.close(); copyMenuToDraft(w); } }, 'このメニューで記録'),
+    h('button', { class: 'btn', style: 'flex:1', onclick: () => { sh.close(); openTrainingSheet({ editId: w.id }); } }, '編集'),
+    h('button', { class: 'btn ghost', style: 'flex:1', onclick: async () => {
+      const ok = await confirmDialog('記録を削除', `${md(w.date)} の記録を削除します。EXP も計算し直されます。`, [{ label: 'やめる', value: null }, { label: '削除する', value: true, primary: true }]);
+      if (!ok) return;
+      store.deleteWorkout(w.id);
+      sh.close();
+      route();
+      toast('削除しました', false, { label: '取り消す', fn: () => { store.restoreWorkout(w.id); route(); } });
+    } }, '削除'),
+  );
+}
+
+// 体重は折れ線（未記録の日で線を切る）、カロリーは棒。値の一覧も出す
+function bodyHistory(kind, from, to) {
+  const rows = store.listBody().filter((r) => r.date >= from && r.date <= to);
+  if (kind === 'pfc') {
+    const pr = rows.filter((r) => r.p != null || r.f != null || r.c != null);
+    if (!pr.length) return [h('div', { class: 'empty' }, h('b', {}, 'PFC の記録はありません'), 'からだ記録で PFC を入力すると表示されます。')];
+    const full = pr.filter((r) => r.p != null && r.f != null && r.c != null);
+    const e = full.reduce((a, r) => ({ p: a.p + r.p * 4, f: a.f + r.f * 9, c: a.c + r.c * 4 }), { p: 0, f: 0, c: 0 });
+    const sum = e.p + e.f + e.c;
+    return [
+      sum ? h('div', { class: 'card' }, h('b', {}, 'エネルギー比率（P/F/C すべて入力した日）'),
+        h('div', { class: 'pfc-bar' }, ...[['p', '#3b82f6'], ['f', '#f08a3c'], ['c', '#e8b93c']].map(([k, c]) => h('i', { style: `width:${(e[k] / sum) * 100}%;background:${c}` }))),
+        h('div', { class: 'small' }, `P ${Math.round((e.p / sum) * 100)}% ／ F ${Math.round((e.f / sum) * 100)}% ／ C ${Math.round((e.c / sum) * 100)}%（${full.length}日）`))
+        : h('p', { class: 'small muted' }, 'P・F・C の3つがそろった日がないため、比率は出していません'),
+      valueTable(pr.slice().reverse(), (r) => ['p', 'f', 'c'].map((k) => (r[k] == null ? '—' : `${r[k]}g`)).join(' / ')),
+    ];
+  }
+  const key = kind === 'weight' ? 'weight' : 'kcal';
+  const pts = rows.filter((r) => r[key] != null);
+  if (!pts.length) return [h('div', { class: 'empty' }, h('b', {}, kind === 'weight' ? '体重の記録はありません' : 'カロリーの記録はありません'), '記録タブの「からだ」から入力できます。')];
+  const vals = pts.map((r) => Number(r[key]));
+  const out = [];
+  if (kind === 'weight') {
+    const last = pts[pts.length - 1];
+    const diff = pts.length >= 2 ? (Math.round((Number(last.weight) - Number(pts[0].weight)) * 10) / 10) : null;
+    out.push(h('div', { class: 'stats' },
+      h('div', {}, h('b', {}, `${Number(last.weight).toFixed(1)}`), h('span', {}, `最新（${md(last.date)}）kg`)),
+      h('div', {}, h('b', {}, diff == null ? '—' : `${diff > 0 ? '+' : ''}${diff.toFixed(1)}`), h('span', {}, diff == null ? '比較する記録がありません' : '期間の最初→最後 kg')),
+      h('div', {}, h('b', {}, `${pts.length}日`), h('span', {}, '記録した日'))));
+  } else {
+    const avg = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+    out.push(h('div', { class: 'stats' },
+      h('div', {}, h('b', {}, avg.toLocaleString()), h('span', {}, '平均 kcal')),
+      h('div', {}, h('b', {}, Math.max(...vals).toLocaleString()), h('span', {}, '最高 kcal')),
+      h('div', {}, h('b', {}, Math.min(...vals).toLocaleString()), h('span', {}, `最低 kcal（${pts.length}日）`))));
+  }
+  out.push(h('div', { class: 'card chart' }, chartSvg(kind, rows, key, from, to)));
+  out.push(valueTable(pts.slice().reverse(), (r) => (kind === 'weight' ? `${Number(r.weight).toFixed(1)} kg` : `${Number(r.kcal).toLocaleString()} kcal`)));
+  return out;
+}
+
+function valueTable(list, fmt) {
+  return h('div', { class: 'card', style: 'padding:4px 14px' }, h('ul', { class: 'unlock-list' }, ...list.slice(0, 60).map((r) => h('li', {}, h('span', {}, md(r.date)), h('span', {}, fmt(r))))));
+}
+
+function chartSvg(kind, rows, key, from, to) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+  const W = 340, H = 180, L = 40, R = 8, T = 10, B = 24;
+  const pts = rows.filter((r) => r[key] != null);
+  const first = from === '0000-00-00' ? pts[0].date : from;
+  const t0 = new Date(first + 'T00:00').getTime(), t1 = Math.max(new Date(to + 'T00:00').getTime(), t0 + 86400e3);
+  const vals = pts.map((r) => Number(r[key]));
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (kind === 'kcal') lo = 0;
+  const pad = kind === 'weight' ? Math.max(0.5, (hi - lo) * 0.15) : hi * 0.1;
+  lo = kind === 'weight' ? lo - pad : 0; hi += pad;
+  if (hi === lo) hi = lo + 1;
+  const x = (d) => L + ((new Date(d + 'T00:00').getTime() - t0) / (t1 - t0)) * (W - L - R);
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', role: 'img', 'aria-label': kind === 'weight' ? '体重の推移' : '摂取カロリー' });
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + ((hi - lo) * i) / 3;
+    svg.append(el('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: '#333a42', 'stroke-width': 1 }));
+    const t = el('text', { x: L - 4, y: y(v) + 4, 'text-anchor': 'end', 'font-size': 10, fill: '#b9c2ca' });
+    t.textContent = kind === 'weight' ? v.toFixed(1) : Math.round(v).toLocaleString();
+    svg.append(t);
+  }
+  [first, to].forEach((d, i) => {
+    const t = el('text', { x: i ? W - R : L, y: H - 6, 'text-anchor': i ? 'end' : 'start', 'font-size': 10, fill: '#b9c2ca' });
+    t.textContent = md(d);
+    svg.append(t);
+  });
+  if (kind === 'kcal') {
+    const bw = Math.max(2, Math.min(14, ((W - L - R) / Math.max(1, (t1 - t0) / 86400e3)) * 0.7));
+    pts.forEach((r) => svg.append(el('rect', { x: x(r.date) - bw / 2, y: y(Number(r.kcal)), width: bw, height: y(0) - y(Number(r.kcal)), fill: '#39d9c6', rx: 1 })));
+  } else {
+    // 連続した日だけ線でつなぐ（未記録の日で線を切る）
+    let seg = [];
+    const flush = () => { if (seg.length > 1) svg.append(el('polyline', { points: seg.map(([a, b]) => `${a},${b}`).join(' '), fill: 'none', stroke: '#39d9c6', 'stroke-width': 2 })); seg = []; };
+    let prev = null;
+    pts.forEach((r) => {
+      const gap = prev && (new Date(r.date + 'T00:00') - new Date(prev + 'T00:00')) / 86400e3 > 1;
+      if (gap) flush();
+      seg.push([x(r.date), y(Number(r.weight))]);
+      prev = r.date;
+    });
+    flush();
+    pts.forEach((r) => svg.append(el('circle', { cx: x(r.date), cy: y(Number(r.weight)), r: 3, fill: '#39d9c6' })));
+  }
+  return svg;
 }
 
 /* ============================================================
@@ -827,18 +1073,18 @@ function renderHistory() {
 function renderGrowth() {
   const gr = growth();
   const look = myLook();
-  const total = Object.values(gr.exp).reduce((a, b) => a + b, 0) + gr.days * 10;
+  const total = gr.total;
   const tl = levelOf(total);
   const shoulderLv = levelOf(gr.exp.shoulder).lv;
   view.append(
     h('div', { class: 'hero-char' }, h('div', { class: 'plate', 'aria-hidden': 'true' }), charEl(look, 'detail', { label: 'あなたのキャラクター' })),
     h('div', { class: 'name-row' }, h('h2', {}, state.profile.name || 'あなた'), h('span', { class: 'title-badge' }, titleName(state.profile.title))),
     h('div', { class: 'pad stack' },
-      h('p', { class: 'small muted', style: 'margin:0;text-align:center' }, `見本の成長段階: ${gr.name}（設定の「見本の操作」で切替）`),
+      gr.preview ? h('p', { class: 'small', style: 'margin:0;text-align:center;color:var(--reward)' }, `見本の成長段階「${gr.name}」を表示中（設定で「実データ」に戻せます）`) : null,
       h('div', { class: 'stats' },
         h('div', {}, h('b', {}, `Lv.${tl.lv}`), h('span', {}, `総EXP ${total.toLocaleString()}`)),
         h('div', {}, h('b', {}, `${gr.days}日`), h('span', {}, '累計記録日')),
-        h('div', {}, h('b', {}, `${Math.min(3, gr.days)}回`), h('span', {}, '今週の記録'))),
+        h('div', {}, h('b', {}, `${gr.week}回`), h('span', {}, '今週の記録'))),
       h('button', { class: 'btn primary lg block', onclick: openDressSheet }, '着せ替え'),
       h('h2', { class: 'sec' }, '部位の成長', h('small', {}, '鍛えた分だけ、少しずつ変わる')),
       h('div', { class: 'parts' }, ...PARTS.map((p) => {
@@ -898,7 +1144,8 @@ function dressPanel(look, onChange, { titles = true, titleState } = {}) {
           h('button', { class: 'opt', 'aria-pressed': String(!!look.wristband), disabled: !unlockedBand, onclick: () => set('wristband', true) }, 'リストバンド', unlockedBand ? null : h('br'), unlockedBand ? null : h('small', { class: 'muted' }, '記録日7日で解放'))));
     } else if (tab === 'title' && titleState) {
       panel.append(h('ul', { class: 'unlock-list', style: 'padding:0' }, ...TITLES.map((t) => {
-        const ok = t.unlocked || (t.id === 't_shoulder7' && levelOf(gr.exp.shoulder).lv >= 7) || (t.id === 't_shoulder10' && levelOf(gr.exp.shoulder).lv >= 10) || (t.id === 't_30days' && gr.days >= 30);
+        const shLv = levelOf(gr.exp.shoulder).lv;
+        const ok = t.id === 't_first' || (t.id === 't_3days' && gr.days >= 3) || (t.id === 't_shoulder5' && shLv >= 5) || (t.id === 't_shoulder7' && shLv >= 7) || (t.id === 't_shoulder10' && shLv >= 10) || (t.id === 't_30days' && gr.days >= 30);
         return h('li', {}, h('span', {}, t.name, h('br'), h('small', { class: 'muted' }, ok ? '解放済み' : `解放条件: ${t.cond}`)),
           h('button', { class: 'btn ' + (titleState.id === t.id ? 'primary' : ''), disabled: !ok, 'aria-pressed': String(titleState.id === t.id), onclick: () => { titleState.id = t.id; onChange(); drawPanel(); } }, titleState.id === t.id ? '選択中' : '選ぶ'));
       })));
@@ -931,7 +1178,7 @@ function openDressSheet() {
     if (!persist()) return;
     dirty = false;
     sh.close('applied');
-    toast('着せ替えを保存しました（見本：この端末のみ）');
+    toast('着せ替えを保存しました（この端末）');
     route();
   } }, '適用');
   const foot = h('div', { class: 'sheet-foot', style: 'flex-wrap:wrap' }, h('div', { style: 'width:100%' }, unsaved), cancel, apply);
@@ -946,7 +1193,9 @@ function renderSettings() {
   view.append(h('div', { class: 'pad stack' },
     h('div', { class: 'list' },
       h('a', { href: '#/settings/character' }, h('span', {}, 'キャラクター設定'), h('span', { class: 'v' }, `タイプ: ${state.profile.look.type === 'female' ? '女性' : '男性'} ›`)),
-      h('div', {}, h('span', {}, 'アカウント'), h('span', { class: 'v' }, 'Phase 2（メール認証）'))),
+      h('div', {}, h('span', {}, 'アカウント'), h('span', { class: 'v' }, 'ベータ版はログインなし'))),
+    h('h2', { class: 'sec' }, '記録のデータ', h('small', {}, 'この端末のブラウザだけに保存')),
+    dataCard(),
     h('h2', { class: 'sec' }, '共有ジムの公開', h('small', {}, '初期は非公開')),
     privacyToggles(p, persist),
     h('h2', { class: 'sec' }, '表示'),
@@ -958,27 +1207,47 @@ function renderSettings() {
     })()),
     h('h2', { class: 'sec' }, '契約'),
     h('div', { class: 'card small' }, '年会費 1,000円。税表示・更新方式・返金などの販売条件は未承認のため、課金は実装していません（Phase 4）。'),
-    h('h2', { class: 'sec' }, '見本の操作', h('small', {}, '確認用。製品版にはありません')),
+    h('h2', { class: 'sec' }, '見た目の確認', h('small', {}, '記録には影響しません')),
     h('div', { class: 'card stack' },
-      h('div', {}, h('div', { class: 'small muted', style: 'margin-bottom:4px' }, '成長段階'),
-        h('div', { class: 'seg' }, ...Object.entries(GROWTH_PRESETS).map(([k, g]) => h('button', { 'aria-pressed': String(state.demo.growth === k), onclick: () => { state.demo.growth = k; persist(); route(); } }, g.name)))),
+      h('div', {}, h('div', { class: 'small muted', style: 'margin-bottom:4px' }, '成長の表示'),
+        h('div', { class: 'seg' }, h('button', { 'aria-pressed': String(state.demo.growth === 'real'), onclick: () => { state.demo.growth = 'real'; persist(); route(); } }, '実データ'),
+          ...Object.entries(GROWTH_PRESETS).map(([k, g]) => h('button', { 'aria-pressed': String(state.demo.growth === k), onclick: () => { state.demo.growth = k; persist(); route(); } }, '見本:' + g.name)))),
       h('div', {}, h('div', { class: 'small muted', style: 'margin-bottom:4px' }, 'ジムの見本参加者'),
         h('div', { class: 'seg' }, ...[0, 12, 20, 23].map((n) => h('button', { 'aria-pressed': String(state.demo.members === n), onclick: () => { state.demo.members = n; persist(); route(); } }, `${n}人`)))),
-      (() => {
-        const inp = h('input', { type: 'checkbox', id: 'fs', role: 'switch' });
-        inp.checked = state.demo.failSave;
-        inp.onchange = () => { state.demo.failSave = inp.checked; persist(); };
-        return h('label', { class: 'toggle', for: 'fs' }, h('span', {}, '着せ替えの保存失敗を試す'), inp);
-      })(),
       h('a', { class: 'btn block', href: 'art-sheet.html' }, 'キャラ見本シートを開く'),
       h('button', { class: 'btn block', onclick: () => { state.onboarded = false; persist(); location.hash = '#/onboarding'; } }, '初期設定をやり直す'),
-      h('button', { class: 'btn ghost block', onclick: async () => {
-        const ok = await confirmDialog('見本データを消去', 'この端末の見本用データ（kmg2.demo.*）だけを消します。旧版のデータには触れません。', [{ label: 'やめる', value: null }, { label: '消去する', value: true, primary: true }]);
-        if (!ok) return;
-        try { localStorage.removeItem(KEY); localStorage.removeItem(DRAFT_KEY); localStorage.removeItem('kmg2.demo.timer'); } catch (e) {}
-        state = fresh(); location.hash = '#/onboarding'; route();
-      } }, '見本データを消去')),
+    ),
   ));
+}
+
+function dataCard() {
+  const st = store.stats();
+  const file = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      const r = store.importData(await f.text());
+      toast(`読み込みました（トレーニング ${r.added} 件を追加）`);
+      route();
+    } catch (err) { toast(err.message || '読み込めませんでした', true); }
+  } });
+  return h('div', { class: 'card stack' },
+    h('p', { class: 'small', style: 'margin:0' }, `トレーニング ${st.workouts} 件 ／ からだ記録 ${st.bodyDays} 日 ／ 約 ${Math.max(1, Math.round(st.bytes / 1024))} KB`),
+    h('p', { class: 'small muted', style: 'margin:0' }, '機種変更やブラウザのデータ削除で消えます。ときどき書き出して保管してください。'),
+    h('button', { class: 'btn block', onclick: () => {
+      const blob = new Blob([store.exportData({ name: state.profile.name, look: state.profile.look, title: state.profile.title })], { type: 'application/json' });
+      const a = h('a', { href: URL.createObjectURL(blob), download: `kinniku-morimori-${today()}.json` });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    } }, 'バックアップを書き出す（JSON）'),
+    h('button', { class: 'btn block', onclick: () => file.click() }, 'バックアップから読み込む'), file,
+    h('button', { class: 'btn ghost block', onclick: async () => {
+      const ok = await confirmDialog('すべて消去', 'この端末の記録・見た目・設定をすべて消します。元に戻せません。先に書き出しをおすすめします。', [{ label: 'やめる', value: null }, { label: 'すべて消去', value: true, primary: true }]);
+      if (!ok) return;
+      store.wipeAll();
+      try { localStorage.removeItem(KEY); localStorage.removeItem(DRAFT_KEY); localStorage.removeItem('kmg2.demo.timer'); } catch (e) {}
+      state = fresh(); location.hash = '#/onboarding'; route();
+    } }, 'この端末のデータをすべて消去'));
 }
 
 function renderCharacterSettings() {
