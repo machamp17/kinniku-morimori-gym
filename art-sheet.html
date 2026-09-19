@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>キャラ見本シート</title>
+<style>
+  :root { --bg:#141619; --surface:#22262B; --border:#49515B; --text:#F5F7F8; --sub:#B9C2CA; --accent:#39D9C6; --reward:#F2C75C; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif; font-size: 14px; }
+  header { padding: 16px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header p { margin: 0; color: var(--sub); }
+  .badge { display:inline-block; background: var(--reward); color:#1a1a1a; font-weight:700; border-radius:4px; padding:2px 8px; font-size:12px; margin-right:6px; }
+  section { padding: 16px; border-bottom: 1px solid var(--border); }
+  section h2 { font-size: 16px; margin: 0 0 4px; }
+  section > p { margin: 0 0 12px; color: var(--sub); font-size: 13px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .cell { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px; text-align: center; }
+  .cell canvas { display: block; image-rendering: pixelated; margin: 0 auto; }
+  .cell span { display: block; font-size: 12px; color: var(--sub); margin-top: 4px; }
+  .d1 canvas { width: 192px; height: 192px; }
+  .d2 canvas { width: 384px; height: 384px; }
+  .g1 canvas { width: 48px; height: 48px; }
+  .g2 canvas { width: 96px; height: 96px; }
+  .ctrl { display:flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .ctrl label { color: var(--sub); }
+  select { font-size: 16px; background: var(--surface); color: var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>筋肉モリモリジム キャラ見本シート</h1>
+  <p><span class="badge">仮素材</span>コード描画のスプライト（Phase 1 見本）。依頼者のアート承認前です。</p>
+</header>
+<div id="root"></div>
+<script type="module" src="js/art-sheet.js"></script>
+</body>
+</html>
