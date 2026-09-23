@@ -38,7 +38,7 @@ export const POSES = [
   { id: 'raise', name: 'サイドレイズ' },
   { id: 'press', name: 'ショルダープレス' },
   { id: 'squat', name: 'スクワット' },
-  { id: 'row', name: 'ダンベルを持つ' },
+  { id: 'row', name: 'バーベルを持つ' },
   { id: 'run', name: '走る' },
   { id: 'stretch', name: 'ストレッチ' },
 ];
@@ -48,7 +48,7 @@ const POSE_DEF = {
   raise: { arm: (s) => [13, 2, 25, -1], prop: 'dumbbell' },
   press: { arm: (s) => [9, -7, 7, -20], prop: 'dumbbell' },
   squat: { arm: (s) => [10, 6, 15, -5], prop: 'barbellBack', drop: 13, leg: 'squat' },
-  row: { arm: (s) => (s < 0 ? [3, 16, 6, 4] : [3.2, 14, 4, 26]), prop: 'dumbbellOne', lean: true },
+  row: { arm: (s) => [4, 18, 7, 26], prop: 'barbellHold' },
   run: { arm: (s) => (s < 0 ? [-2, 13, 3, 1] : [4, 16, 9, 25]), leg: 'run' },
   stretch: { arm: (s) => [5, -8, 1, -24] },
 };
@@ -534,17 +534,22 @@ export function drawCharacter(look, kind = 'detail') {
   }
 
   /* 小道具（バーベル・ダンベル） */
-  const BAR = ['#22262c', '#5b646f', '#79838f', '#98a3af', '#c2cbd4'];
-  const PLATE = ['#0c0e11', '#1b1f24', '#24292f', '#31373f', '#454d57'];
+  // 小さく表示しても何を持っているか分かるよう、シャフトは細く明るく、プレートは大きく濃くする
+  const BAR = ['#1a1d22', '#8e98a4', '#aab3be', '#c6ced7', '#eef2f6'];
+  const PLATE = ['#07080a', '#15181c', '#1e2228', '#2b3037', '#3c444e'];
   const dumbbell = (x, y) => {
-    S.paint(Rows(x, y - 1.6, y + 1.6, () => 7.5), BAR, 'db' + x, { hl: false });
-    for (const d of [-1, 1]) S.paint(Ell(x + d * 7, y, 2.6, 6.2), PLATE, 'dbp' + x + d);
+    S.paint(Rows(x, y - 1.8, y + 1.8, () => 5.5), BAR, 'db' + x, { hl: false, flat: 3 });
+    for (const d of [-1, 1]) {
+      S.paint(Rows(x + d * 8, y - 10.5, y + 10.5, () => 4.6), PLATE, 'dbp' + x + d); // 角のある大きなプレート
+      S.paint(Rows(x + d * 8, y - 10.5, y + 10.5, () => 1.6), BAR, 'dbs' + x + d, { flat: 2 }); // 中央の明るい線で輪郭を出す
+    }
   };
   const barbell = (y, halfLen) => {
-    S.paint(Rows(cx, y - 1.4, y + 1.4, () => halfLen), BAR, 'bar', { hl: false });
+    S.paint(Rows(cx, y - 1.6, y + 1.6, () => halfLen), BAR, 'bar', { hl: false, flat: 3 });
     for (const d of [-1, 1]) {
-      S.paint(Ell(cx + d * (halfLen - 3), y, 3, 9.5), PLATE, 'plate' + d);
-      S.paint(Ell(cx + d * (halfLen - 8), y, 2.4, 7), PLATE, 'plate2' + d);
+      S.paint(Rows(cx + d * (halfLen - 4), y - 11, y + 11, () => 4.2), PLATE, 'plate' + d);
+      S.paint(Rows(cx + d * (halfLen - 4), y - 11, y + 11, () => 1.4), BAR, 'plateS' + d, { flat: 2 });
+      S.paint(Rows(cx + d * (halfLen - 10), y - 7.5, y + 7.5, () => 3.4), PLATE, 'plate2' + d);
     }
   };
   // 背中側に担ぐバーベルは頭より先に描く（頭の後ろに回る）
@@ -586,8 +591,7 @@ export function drawCharacter(look, kind = 'detail') {
   S.xf = null;
 
   if (pose.prop === 'dumbbell') arms.forEach((a) => dumbbell(a.wx + a.s * 1.2, a.wY + 4));
-  if (pose.prop === 'dumbbellOne') dumbbell(arms[1].wx + 1.2, arms[1].wY + 4);
-  if (pose.prop === 'barbellUp') barbell(arms[0].wY + 1, g.jointX + 22);
+  if (pose.prop === 'barbellHold') barbell(arms[0].wY + 4, g.jointX + 20);
 
   S.outline(kind === 'gym' ? 2 : 1);
   return { canvas: S.toCanvas(), shoulderWidth: g.shoulderWidth, res };
