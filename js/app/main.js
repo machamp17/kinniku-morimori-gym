@@ -492,7 +492,8 @@ function renderGym() {
     if (state.privacy.join && mine) {
       members.unshift({
         id: 'me', me: true, name: state.profile.name, nameVisible: state.privacy.name, contentVisible: state.privacy.content,
-        title: titleName(state.profile.title), recordedMinAgo: Math.floor((Date.now() - mine.createdAt) / 60000), comment: mine.comment || null,
+        title: titleName(state.profile.title), recordedMinAgo: Math.floor((Date.now() - mine.createdAt) / 60000),
+        comment: store.commentAlive(mine) ? mine.comment : null,
         menu: menuOf(store.entriesOfDay(mine.date)), nice: 0, look: myLook(),
       });
     }
@@ -619,7 +620,7 @@ function renderGym() {
       members = rows.map((r) => ({
         id: r.workout_id, me: r.is_me, name: r.display_name, nameVisible: true, contentVisible: r.entries != null,
         title: titleName(r.title_id), recordedMinAgo: Math.max(0, Math.floor((Date.now() - Date.parse(r.recorded_at)) / 60000)),
-        comment: r.is_me && lm ? lm.comment || null : r.comment ? String(r.comment).slice(0, 40) : null,
+        comment: r.is_me && lm ? (store.commentAlive(lm) ? lm.comment : null) : r.comment ? String(r.comment).slice(0, 40) : null,
         // 自分の分は、まだサーバーに届いていない記録も含めてこの端末の1日分を出す
         menu: r.entries ? menuOf(r.is_me && lm ? store.entriesOfDay(lm.date) : r.entries) : [], nice: r.nice_count, niced: r.niced,
         look: r.is_me ? myLook() : safeLook(r.look),
@@ -627,7 +628,7 @@ function renderGym() {
       // サーバーにまだ届いていない自分の記録も、この端末では表示する
       if (!members.some((m) => m.me) && state.privacy.join && lm) {
         members.push({ id: 'me', me: true, name: state.profile.name, nameVisible: true, contentVisible: true, title: titleName(state.profile.title),
-          recordedMinAgo: Math.max(0, Math.floor((Date.now() - lm.createdAt) / 60000)), comment: lm.comment || null, menu: menuOf(store.entriesOfDay(lm.date)), nice: 0, look: myLook() });
+          recordedMinAgo: Math.max(0, Math.floor((Date.now() - lm.createdAt) / 60000)), comment: store.commentAlive(lm) ? lm.comment : null, menu: menuOf(store.entriesOfDay(lm.date)), nice: 0, look: myLook() });
       }
       // 自分を先頭に（ページ1に必ず入れる）
       members.sort((a, b) => (b.me ? 1 : 0) - (a.me ? 1 : 0));
@@ -1001,7 +1002,7 @@ function trainingForm({ inSheet, editId, onSaved }) {
     if (!valid) { errors.form = '完了チェックの付いたセットが1つ以上必要です'; draw(); return; }
     if (d.date > today()) { errors.form = '未来の日付には記録できません'; draw(); return; }
     const { gain, bonus } = store.expGainOf(d.entries, d.date, editId);
-    const saved = store.saveWorkout({ id: editId, date: d.date, entries: d.entries, comment: d.comment });
+    const saved = store.saveWorkout({ id: editId, date: d.date, entries: d.entries });
     if (!saved) { errors.form = 'この端末に保存できませんでした（容量不足の可能性）。入力はそのまま残っています'; draw(); return; }
     const txt = Object.entries(gain).map(([q, v]) => `${PARTS.find((x) => x.id === q).name} +${v}EXP`).concat(bonus ? [`継続 +${bonus}EXP`] : []).join('・');
     const dropped = d.entries.some((en) => en.sets.some((x) => !x.done));

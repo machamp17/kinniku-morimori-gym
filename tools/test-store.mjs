@@ -138,6 +138,28 @@ ok('その日の記録を分けて保存しても全部取れる', store.entries
   store.entriesOfDay('2026-09-20').map((e) => e.exId).join(','));
 ok('別の日の種目は混ざらない', !store.entriesOfDay('2026-09-20').some((e) => e.exId === 'ex_squat'));
 
+// ひとことは、あとからトレーニングを保存しても消えない（24時間）
+store.setUser('user-f');
+const latest = () => store.listWorkouts()[0];
+store.postComment('今日は脚の日', '2026-09-20');
+store.saveWorkout({ date: '2026-09-20', entries: [{ exId: 'ex_squat', sets: [{ kg: '80', reps: '5', done: true }] }] });
+ok('トレーニングを保存してもひとことが残る', latest().comment === '今日は脚の日', latest().comment);
+store.saveWorkout({ date: '2026-09-20', entries: [{ exId: 'ex_bench', sets: [{ kg: '60', reps: '10', done: true }] }] });
+ok('2回目の保存でも残る', latest().comment === '今日は脚の日');
+store.postComment('追い込んだ', '2026-09-20');
+ok('新しいひとことで置き換わる', latest().comment === '追い込んだ' && store.currentComment().text === '追い込んだ');
+// 24時間より前に出したひとことは引き継がない（丸一日たった状態にする）
+store.listWorkouts().forEach((w) => { if (w.comment) w.commentAt = store.commentAt(w) - 25 * 3600e3; });
+ok('24時間を過ぎたひとことは生きていない', store.currentComment() === null && !store.commentAlive(latest()));
+store.saveWorkout({ date: '2026-09-20', entries: [{ exId: 'ex_walk', sets: [{ min: '30', done: true }] }] });
+ok('24時間を過ぎたひとことは引き継がない', latest().comment === '');
+// 昔の記録を編集しても、その記録のひとことは変わらない
+store.setUser('user-g');
+const w9 = store.saveWorkout({ date: '2026-09-01', entries: [{ exId: 'ex_bench', sets: [{ kg: '50', reps: '8', done: true }] }], comment: '初日' });
+store.postComment('今日のひとこと', '2026-09-20');
+store.saveWorkout({ id: w9.id, date: '2026-09-01', entries: [{ exId: 'ex_bench', sets: [{ kg: '55', reps: '8', done: true }] }] });
+ok('古い記録を直しても、その記録のひとことはそのまま', store.getWorkout(w9.id).comment === '初日', store.getWorkout(w9.id).comment);
+
 // 使ってほしくない言葉
 store.setUser('user-d');
 const said = (t) => { try { store.postComment(t, '2026-09-19'); return null; } catch (e) { return e.message; } };

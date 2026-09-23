@@ -120,8 +120,10 @@ function enqueue(item) {
 /* ---------- トレーニング ---------- */
 export function listWorkouts({ includeDeleted = false } = {}) {
   return db.workouts
-    .filter((w) => includeDeleted || !w.deletedAt)
-    .sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : a.date < b.date ? 1 : -1));
+    .map((w, i) => [w, i])
+    .filter(([w]) => includeDeleted || !w.deletedAt)
+    .sort(([a, ai], [b, bi]) => (a.date === b.date ? b.createdAt - a.createdAt || bi - ai : a.date < b.date ? 1 : -1))
+    .map(([w]) => w);
 }
 
 // その日の種目を保存した順に全部つなげる（休憩をはさんで何回に分けて保存しても1日分として見せる）
@@ -133,7 +135,21 @@ export function entriesOfDay(date) {
 }
 export const getWorkout = (id) => db.workouts.find((w) => w.id === id) || null;
 
+// ひとことの寿命（キャラがジムに出ているのと同じ24時間）
+const COMMENT_MS = 24 * 3600e3;
+export const commentAt = (w) => (w && (w.commentAt || w.createdAt)) || 0;
+export const commentAlive = (w) => !!(w && w.comment) && Date.now() - commentAt(w) < COMMENT_MS;
+// いま生きているひとこと（24時間以内に出したもの。無ければ null）
+export function currentComment() {
+  const w = db.workouts
+    .map((x, i) => [x, i])
+    .filter(([x]) => !x.deletedAt && x.comment)
+    .sort(([a, ai], [b, bi]) => commentAt(b) - commentAt(a) || bi - ai)[0];
+  return w && commentAlive(w[0]) ? { text: w[0].comment, at: commentAt(w[0]) } : null;
+}
+
 // 完了セットだけを保存（未完了は下書き扱い）。id があれば更新
+// comment を渡さない（undefined）時は、今のひとことをそのまま残す・引き継ぐ
 export function saveWorkout({ id, date, entries, comment }) {
   const clean = entries
     .map((en) => {
@@ -146,14 +162,19 @@ export function saveWorkout({ id, date, entries, comment }) {
   const now = Date.now();
   let w = id ? getWorkout(id) : null;
   const before = w ? JSON.parse(JSON.stringify(w)) : null;
-  if (w) Object.assign(w, { date, entries: clean, comment: comment || '', updatedAt: now });
-  else {
-    // ひとことだけ先に投稿していた場合、その後のトレーニング記録にひとことを引き継ぐ（ジムでは最新の記録を表示するため）
-    if (!comment && clean.length) {
-      const c = db.workouts.filter((x) => !x.deletedAt && !x.entries.length && x.comment && now - x.createdAt < 24 * 3600e3).sort((a, b) => b.createdAt - a.createdAt)[0];
-      if (c) comment = c.comment;
+  let text = comment === undefined ? null : String(comment || ''); // null = 変えない
+  let at = now; // ひとことを出した時刻（24時間の数え始め）
+  if (w) {
+    if (text === null) { text = w.comment || ''; at = commentAt(w) || now; }
+    Object.assign(w, { date, entries: clean, comment: text, commentAt: text ? at : undefined, updatedAt: now });
+  } else {
+    // ジムは最新の記録のひとことを出すので、生きているひとことを新しい記録へ引き継ぐ
+    if (!text) {
+      const live = currentComment();
+      text = live ? live.text : '';
+      at = live ? live.at : now;
     }
-    w = { id: uuid(), date, entries: clean, comment: comment || '', timezone: tz(), createdAt: now, updatedAt: now, version: 0 };
+    w = { id: uuid(), date, entries: clean, comment: text, commentAt: text ? at : undefined, timezone: tz(), createdAt: now, updatedAt: now, version: 0 };
     db.workouts.push(w);
   }
   if (userId) enqueue({ kind: 'workout', key: w.id });
@@ -317,7 +338,14 @@ export async function pull() {
   const pendingW = new Set(db.queue.filter((q) => q.kind === 'workout').map((q) => q.key));
   const pendingB = new Set(db.queue.filter((q) => q.kind === 'body').map((q) => q.key));
   const map = new Map(db.workouts.map((w) => [w.id, w]));
-  for (const r of workouts) if (!pendingW.has(r.id)) map.set(r.id, fromRow(r));
+  for (const r of workouts) {
+    if (pendingW.has(r.id)) continue;
+    const row = fromRow(r);
+    // ひとことを出した時刻はこの端末だけが知っているので、同じ文なら引き継ぐ（24時間の数え方を保つ）
+    const old = map.get(r.id);
+    if (old && old.commentAt && old.comment === row.comment) row.commentAt = old.commentAt;
+    map.set(r.id, row);
+  }
   db.workouts = [...map.values()];
   for (const r of body) {
     if (pendingB.has(r.record_date)) continue;
