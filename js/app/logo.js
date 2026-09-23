@@ -18,7 +18,7 @@ let fontReady = null;
 function loadFont() {
   if (!fontReady) {
     fontReady = Promise.race([
-      document.fonts ? document.fonts.load(`16px ${FONT}`, '筋肉モリモリジム') : Promise.resolve(),
+      document.fonts ? Promise.all([document.fonts.load(`16px ${FONT}`, '筋肉モリモリジム'), document.fonts.load(`11px ${FONT}`, 'こつこつひたむきにあの頃を取り戻そうなたは出来る必ず')]) : Promise.resolve(),
       new Promise((r) => setTimeout(r, 2500)),
     ]).then(() => document.fonts && document.fonts.check(`16px ${FONT}`, '筋'));
   }

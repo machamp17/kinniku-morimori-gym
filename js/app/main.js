@@ -405,7 +405,8 @@ const SLOTS = [[37.5, 33.1], [18.8, 34.1], [70.5, 35.1], [54.7, 46], [85.5, 46.4
 // 人数が少ない時も散らばるよう、埋める順番を固定の並びでばらす（更新のたびに入れ替えない）
 const SLOT_ORDER = [9, 2, 15, 6, 17, 0, 11, 13, 4, 19, 7, 1, 14, 10, 5, 18, 3, 12, 16, 8];
 const posOf = (i) => SLOTS[SLOT_ORDER[i]];
-const POSTERS = [['昨日の自分を', '超えよう'], ['続けた分だけ、', '強くなる'], ['休むことも、', 'トレーニング']];
+// 壁の文言（依頼者指定）。どれも9文字で、縦書き3文字×3列にきれいに収まる
+const POSTERS = ['こつこつひたむきに', 'あの頃を取り戻そう', 'あなたは出来る必ず'];
 
 // 他人から届いた見た目は信用せず、知っている項目・範囲だけ使う
 function safeLook(l) {
@@ -494,7 +495,13 @@ function renderGym() {
     if (page >= pages()) page = pages() - 1;
     fill(stage);
     // ポスター（読めるテキストとして配置）
-    [31.3, 44.2, 57.1].forEach((x, i) => stage.append(h('div', { class: 'poster', style: `left:${x}%` }, POSTERS[i].join(''))));
+    [31.3, 44.2, 57.1].forEach((x, i) => {
+      // 3文字ずつ改行して、縦書き3文字×3列の正方形に収める
+      const lines = POSTERS[i].match(/.{1,3}/gu) || [POSTERS[i]];
+      const sp = h('span', {});
+      lines.forEach((t, k) => { if (k) sp.append(h('br')); sp.append(t); });
+      stage.append(h('div', { class: 'poster', style: `left:${x}%` }, sp));
+    });
     const list = pageMembers();
     if (loading) stage.append(h('div', { class: 'empty gym-empty' }, h('b', {}, '読み込み中…')));
     else if (loadError) stage.append(h('div', { class: 'empty gym-empty' }, h('b', {}, '読み込めませんでした'), loadError, h('br'), h('button', { class: 'btn', style: 'margin-top:8px', onclick: refresh }, 'もう一度')));

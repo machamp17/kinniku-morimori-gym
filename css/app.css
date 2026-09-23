@@ -153,8 +153,14 @@ canvas.px { image-rendering: pixelated; image-rendering: crisp-edges; display: b
 .gym-head .count { font-size: 13px; color: var(--sub); }
 .gym-head .count strong { color: var(--accent); font-size: 18px; }
 .gym-stage { position: relative; width: 100%; aspect-ratio: 768 / 1152; background: #1c1f23 url(../assets/gym-bg.webp) center top / 100% auto no-repeat; overflow: hidden; }
-/* 背景のポスター枠（5.1%〜14.0%）に合わせて縦書きで置く */
-.poster { position: absolute; top: 5.1%; width: 9.8%; height: 8.9%; display: flex; align-items: center; justify-content: center; writing-mode: vertical-rl; color: #f0f3f5; font-weight: 800; font-size: clamp(10px, 2.9vw, 13px); line-height: 1.15; letter-spacing: 0; text-shadow: 0 1px 0 #000; overflow: hidden; }
+/* 背景のポスター枠（5.1%〜14.0%）に合わせて縦書きで置く。3文字×3列で中央にそろえる */
+.poster { position: absolute; top: 5.1%; width: 9.8%; height: 8.9%; display: grid; place-items: center; overflow: hidden; }
+.poster span {
+  writing-mode: vertical-rl; text-orientation: upright;
+  font-family: "DotGothic16", system-ui, sans-serif;
+  font-size: clamp(8px, 2.3vw, 11px); line-height: 1.16; letter-spacing: 0;
+  max-height: 100%; color: #f2f6f8; text-shadow: 0 1px 0 #000, 0 0 3px rgba(0,0,0,.8);
+}
 .slot {
   /* 足元が (left, top)。配置は横14.5%か縦13.8%以上離れているので、この大きさなら重ならない */
   position: absolute; width: clamp(44px, 14vw, 56px); height: 64px; transform: translateX(-50%); margin-top: -56px;
@@ -164,7 +170,9 @@ canvas.px { image-rendering: pixelated; image-rendering: crisp-edges; display: b
 .slot::before { content: ""; position: absolute; left: 50%; width: 40px; margin-left: -20px; bottom: 4px; height: 10px; border-radius: 50%; background: rgba(0,0,0,.35); }
 .slot canvas { position: relative; flex: none; margin-bottom: 8px; }
 .slot[aria-pressed="true"]::before { background: none; border: 2px solid var(--accent); box-shadow: 0 0 8px var(--accent); bottom: 2px; height: 14px; width: 50px; margin-left: -25px; }
-.slot.me::after { content: "あなた"; position: absolute; top: 2px; left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 700; color: var(--accent-ink); background: var(--accent); padding: 0 6px; border-radius: 8px; white-space: nowrap; }
+/* 「あなた」は髪と重ならないよう足元の下に置く */
+.slot.me { z-index: 2; }
+.slot.me::after { content: "あなた"; position: absolute; bottom: -9px; left: 50%; transform: translateX(-50%); font-size: 12px; line-height: 1.25; font-weight: 700; color: var(--accent-ink); background: var(--accent); padding: 0 6px; border-radius: 8px; white-space: nowrap; box-shadow: 0 1px 0 rgba(0,0,0,.5); }
 .bubble {
   position: absolute; z-index: 5; max-width: 132px; padding: 5px 8px; border-radius: 8px;
   background: #f5f7f8; color: #141619; font-size: 12px; font-weight: 700; line-height: 1.35;

@@ -1,5 +1,5 @@
 // オフラインでも開けるようにする。常にネットの最新を優先し、つながらない時だけ保存済みの控えを使う。
-const CACHE = 'kmg-v7';
+const CACHE = 'kmg-v8';
 const CORE = [
   './', './index.html', './css/app.css', './manifest.webmanifest',
   './js/app/main.js', './js/app/data.js', './js/app/exercises.js', './js/app/store.js', './js/app/logo.js', './js/app/cloud.js', './js/app/config.js',
