@@ -29,6 +29,7 @@ const ST2 = { chest: 2, back: 2, shoulder: 20, arm: 2, leg: 2, abs: 2 };
 const presets = {
   faces: () => [MALE, FEMALE].flatMap((b) => FACES.map((f) => [{ ...b, face: f.id }, 'detail'])),
   poses: () => [MALE, FEMALE].flatMap((b) => POSES.map((p) => [{ ...b, pose: p.id, stages: { chest: 1, back: 1, shoulder: 6, arm: 1.5, leg: 1, abs: 1 } }, 'gym'])),
+  megaposes: () => [20, 45, 60].flatMap((sh) => ['curl', 'raise', 'squat', 'row', 'press'].map((pz) => [{ ...MALE, pose: pz, stages: { ...ST2, shoulder: sh } }, 'gym'])),
   gymfaces: () => [MALE, FEMALE].flatMap((b) => FACES.map((f) => [{ ...b, face: f.id }, 'gym'])),
   stages: () => [MALE, FEMALE].flatMap((b) => [ST0, ST1, ST2].map((s) => [{ ...b, stages: s }, 'detail'])),
   shoulders: () => [MALE, FEMALE].flatMap((b) => [0, 3, 6, 10, 13, 16, 20].map((i) => [{ ...b, stages: { ...ST0, shoulder: i } }, 'detail'])),

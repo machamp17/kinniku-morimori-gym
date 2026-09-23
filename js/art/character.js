@@ -46,7 +46,7 @@ const POSE_DEF = {
   stand: {},
   curl: { arm: (s) => [2.4, 20, 7, 4], prop: 'dumbbell' },
   raise: { arm: (s) => [13, 2, 25, -1], prop: 'dumbbell' },
-  press: { arm: (s) => [9, -7, 7, -20], prop: 'dumbbell' },
+  press: { arm: (s) => [9, -7, 12, -20], prop: 'dumbbell' },
   squat: { arm: (s) => [10, 6, 15, -5], prop: 'barbellBack', drop: 13, leg: 'squat' },
   row: { arm: (s) => [4, 18, 7, 26], prop: 'barbellHold' },
   run: { arm: (s) => (s < 0 ? [-2, 13, 3, 1] : [4, 16, 9, 25]), leg: 'run' },
@@ -265,7 +265,11 @@ export function drawCharacter(look, kind = 'detail') {
     return { s, jx, ex: jx + s * dex, eY: 91 + dey + dropY, wx: jx + s * dwx, wY: 91 + dwy + dropY };
   });
   const armFar = Math.max(...armPts.map((a) => Math.abs(a.wx - 96) + g.armR + 8));
-  const propFar = pose.prop === 'barbellUp' || pose.prop === 'barbellBack' ? g.jointX + 26 : pose.prop ? armFar + 6 : 0;
+  const propK = Math.min(3.4, 1 + (g.mult - 1) * 0.6); // 肩が大きいほど持ち物も大きく
+  const handFar = Math.max(...armPts.map((a) => Math.abs(a.wx - 96)));
+  const barHalf = Math.max(58 * Math.sqrt(propK), handFar + 24 * propK); // バーベルの長さ（片側）
+  const propFar = pose.prop === 'barbellBack' || pose.prop === 'barbellUp' || pose.prop === 'barbellHold' ? barHalf + 8 * propK
+    : pose.prop ? handFar + 19 * propK : 0;
   const half = Math.max(g.jointX + g.dRx, g.jointX + 5.6 + g.armR + 6, armFar, propFar) + 3; // 中心から一番外まで（設計座標）
   const pad = half > 95 ? Math.ceil(((half - 95) * res) / 192 / 2) * 2 : 0;
   const S = new Surface(res, pad);
@@ -537,23 +541,29 @@ export function drawCharacter(look, kind = 'detail') {
   // 小さく表示しても何を持っているか分かるよう、シャフトは細く明るく、プレートは大きく濃くする
   const BAR = ['#1a1d22', '#8e98a4', '#aab3be', '#c6ced7', '#eef2f6'];
   const PLATE = ['#07080a', '#15181c', '#1e2228', '#2b3037', '#3c444e'];
+  // ダンベル: 短いシャフトの両端に厚いプレート（バーベルとの違いは「短さ」で出す）
   const dumbbell = (x, y) => {
-    S.paint(Rows(x, y - 1.8, y + 1.8, () => 5.5), BAR, 'db' + x, { hl: false, flat: 3 });
+    const k = propK, ks = Math.sqrt(propK); // シャフトの太さは控えめに伸ばす
+    S.paint(Rows(x, y - 2.6 * ks, y + 2.6 * ks, () => 8.5 * k), BAR, 'db' + x, { hl: false, flat: 3 });
     for (const d of [-1, 1]) {
-      S.paint(Rows(x + d * 8, y - 10.5, y + 10.5, () => 4.6), PLATE, 'dbp' + x + d); // 角のある大きなプレート
-      S.paint(Rows(x + d * 8, y - 10.5, y + 10.5, () => 1.6), BAR, 'dbs' + x + d, { flat: 2 }); // 中央の明るい線で輪郭を出す
+      S.paint(Rows(x + d * 11 * k, y - 15 * k, y + 15 * k, () => 6.2 * k), PLATE, 'dbp' + x + d);
+      S.paint(Rows(x + d * 11 * k, y - 15 * k, y + 15 * k, () => 2 * k), BAR, 'dbs' + x + d, { flat: 2 });
+      S.paint(Rows(x + d * 11 * k, y - 15 * k, y - 11.5 * k, () => 6.2 * k), BAR, 'dbt' + x + d, { flat: 1 });
     }
   };
+  // バーベル: 手の外まで長く伸ばし、両端に大きなプレートを2枚
   const barbell = (y, halfLen) => {
-    S.paint(Rows(cx, y - 1.6, y + 1.6, () => halfLen), BAR, 'bar', { hl: false, flat: 3 });
+    const k = propK, ks = Math.sqrt(propK);
+    S.paint(Rows(cx, y - 2.4 * ks, y + 2.4 * ks, () => halfLen), BAR, 'bar', { hl: false, flat: 3 });
     for (const d of [-1, 1]) {
-      S.paint(Rows(cx + d * (halfLen - 4), y - 11, y + 11, () => 4.2), PLATE, 'plate' + d);
-      S.paint(Rows(cx + d * (halfLen - 4), y - 11, y + 11, () => 1.4), BAR, 'plateS' + d, { flat: 2 });
-      S.paint(Rows(cx + d * (halfLen - 10), y - 7.5, y + 7.5, () => 3.4), PLATE, 'plate2' + d);
+      S.paint(Rows(cx + d * (halfLen - 6 * k), y - 21 * k, y + 21 * k, () => 6.8 * k), PLATE, 'plate' + d);
+      S.paint(Rows(cx + d * (halfLen - 6 * k), y - 21 * k, y + 21 * k, () => 2.2 * k), BAR, 'plateS' + d, { flat: 2 });
+      S.paint(Rows(cx + d * (halfLen - 16 * k), y - 14 * k, y + 14 * k, () => 5.2 * k), PLATE, 'plate2' + d);
+      S.paint(Rows(cx + d * (halfLen - 16 * k), y - 14 * k, y + 14 * k, () => 1.6 * k), BAR, 'plate2S' + d, { flat: 2 });
     }
   };
   // 背中側に担ぐバーベルは頭より先に描く（頭の後ろに回る）
-  if (pose.prop === 'barbellBack') barbell(jY - 3, g.jointX + 22);
+  if (pose.prop === 'barbellBack') barbell(jY - 3, barHalf);
 
   /* 頭 */
   S.xf = headXf;
@@ -591,7 +601,7 @@ export function drawCharacter(look, kind = 'detail') {
   S.xf = null;
 
   if (pose.prop === 'dumbbell') arms.forEach((a) => dumbbell(a.wx + a.s * 1.2, a.wY + 4));
-  if (pose.prop === 'barbellHold') barbell(arms[0].wY + 4, g.jointX + 20);
+  if (pose.prop === 'barbellHold') barbell(arms[0].wY + 4, barHalf);
 
   S.outline(kind === 'gym' ? 2 : 1);
   return { canvas: S.toCanvas(), shoulderWidth: g.shoulderWidth, res };
