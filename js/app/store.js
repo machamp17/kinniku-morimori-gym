@@ -123,6 +123,14 @@ export function listWorkouts({ includeDeleted = false } = {}) {
     .filter((w) => includeDeleted || !w.deletedAt)
     .sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : a.date < b.date ? 1 : -1));
 }
+
+// その日の種目を保存した順に全部つなげる（休憩をはさんで何回に分けて保存しても1日分として見せる）
+export function entriesOfDay(date) {
+  return db.workouts
+    .filter((w) => !w.deletedAt && w.date === date)
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .flatMap((w) => (Array.isArray(w.entries) ? w.entries : []));
+}
 export const getWorkout = (id) => db.workouts.find((w) => w.id === id) || null;
 
 // 完了セットだけを保存（未完了は下書き扱い）。id があれば更新

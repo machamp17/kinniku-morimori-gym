@@ -122,6 +122,20 @@ ok('通報が運営キューに入る', r.rows[0].n === 1);
 ok('通報一覧は利用者から読めない', (await as(B, `select * from public.reports`).catch(() => ({ rows: [] }))).rows.length === 0);
 ok('本人は停止フラグを外せない', await (async () => { await db.query(`update public.profiles set suspended = true where user_id = $1`, [A]); await as(A, `update public.profiles set suspended = false`); return (await db.query(`select suspended from public.profiles where user_id = $1`, [A])).rows[0].suspended === true; })());
 
+// 1日に分けて保存した記録は、まとめて1日分として出る
+await db.query(`update public.profiles set suspended = false where user_id = $1`, [A]); // 前の試験で停止したのを戻す
+const ins = (uid, date, exId) => as(uid, `insert into public.workouts (id, record_date, entries) values (gen_random_uuid(), $1, $2)`,
+  [date, JSON.stringify([{ exId, sets: [{ kg: '20', reps: '10', done: true }] }])]);
+await ins(B, (await db.query(`select ((now() at time zone 'Asia/Tokyo')::date - 1)::text d`)).rows[0].d, 'ex_yesterday');
+await ins(B, today, 'ex_bench');
+await ins(B, today, 'ex_walk');
+r = await as(A, `select * from public.gym_now()`);
+const bRow = r.rows.find((x) => x.display_name === 'ビー');
+ok('同じ日に分けて保存した記録がまとまって出る', !!bRow && bRow.entries.length === 3 && bRow.entries.some((e) => e.exId === 'ex_bench') && bRow.entries.at(-1).exId === 'ex_walk', JSON.stringify(bRow && bRow.entries));
+ok('別の日の記録は混ざらない', !!bRow && !bRow.entries.some((e) => e.exId === 'ex_yesterday'));
+r = await as(A, `select * from public.gym_now()`);
+ok('内容を非公開にしている人の分は返さない', r.rows.find((x) => x.is_me)?.entries === null);
+
 // 使ってほしくない言葉
 await db.query(`update public.profiles set suspended = false where user_id = $1`, [A]);
 const badIns = (uid, text) => fails(uid, `insert into public.workouts (id, record_date, entries, public_comment) values (gen_random_uuid(), $1, '[]', $2)`, [today, text]);

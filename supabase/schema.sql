@@ -271,7 +271,13 @@ language sql stable security definer set search_path = '' as $$
     p.look,
     l.first_completed_at,
     l.public_comment,
-    case when p.show_content then l.entries else null end,
+    -- その日の記録をすべて合わせて返す（休憩をはさんで何回に分けて保存しても、1日分としてまとめて見せる）
+    case when p.show_content then (
+      select coalesce(jsonb_agg(el.e order by w2.first_completed_at, el.ord), '[]'::jsonb)
+      from public.workouts w2
+      cross join lateral jsonb_array_elements(w2.entries) with ordinality as el (e, ord)
+      where w2.user_id = l.user_id and w2.record_date = l.record_date and w2.deleted_at is null
+    ) else null end,
     (select count(*)::integer from public.nice_sets n where n.workout_id = l.id),
     exists (select 1 from public.nice_sets n where n.workout_id = l.id and n.from_user = auth.uid ())
   from latest l

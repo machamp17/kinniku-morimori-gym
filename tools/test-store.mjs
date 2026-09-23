@@ -129,6 +129,15 @@ store.upsertBody('2026-09-19', { kcal: 2100 });
 await store.flush();
 ok('朝の体重に夜カロリーを追記しても体重が残る', store.getBody('2026-09-19').weight === 70.8 && server.body.get('2026-09-19').weight === 70.8 && server.body.get('2026-09-19').kcal === 2100);
 
+// 1日に分けて保存しても、その日の種目がすべて取れる
+store.setUser('user-e');
+store.saveWorkout({ date: '2026-09-20', entries: [{ exId: 'ex_bench', sets: [{ kg: '60', reps: '10', done: true }] }] });
+store.saveWorkout({ date: '2026-09-20', entries: [{ exId: 'ex_side', sets: [{ kg: '8', reps: '15', done: true }] }] });
+store.saveWorkout({ date: '2026-09-19', entries: [{ exId: 'ex_squat', sets: [{ kg: '80', reps: '5', done: true }] }] });
+ok('その日の記録を分けて保存しても全部取れる', store.entriesOfDay('2026-09-20').map((e) => e.exId).join(',') === 'ex_bench,ex_side',
+  store.entriesOfDay('2026-09-20').map((e) => e.exId).join(','));
+ok('別の日の種目は混ざらない', !store.entriesOfDay('2026-09-20').some((e) => e.exId === 'ex_squat'));
+
 // 使ってほしくない言葉
 store.setUser('user-d');
 const said = (t) => { try { store.postComment(t, '2026-09-19'); return null; } catch (e) { return e.message; } };
