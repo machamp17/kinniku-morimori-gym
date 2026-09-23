@@ -264,7 +264,7 @@ const routes = {
 let cleanup = [];
 function route() {
   let path = location.hash.replace(/^#/, '') || '/gym';
-  const needLogin = cloud.enabled && !cloud.user() && !state.localOnly;
+  const needLogin = cloud.enabled && !cloud.user(); // 記録はクラウドに保存する。ログインなしでは使わない
   if (needLogin && !path.startsWith('/auth')) path = '/auth';
   else if (!needLogin && path === '/auth') path = '/gym';
   else if (!path.startsWith('/auth') && !state.onboarded && path !== '/onboarding') path = '/onboarding';
@@ -1721,7 +1721,9 @@ function renderAuth() {
         const r = await cloud.signUp(sentTo, pw.value);
         if (r.needsConfirm) { mode = 'sent'; draw(); }
       });
-      body.append(h('p', { class: 'small muted', style: 'margin:0' }, '登録後に届く確認メールのリンクを開いてください。ログイン状態はこの端末に保持されます（共有の端末では使い終わったらログアウトしてください）。'));
+      body.append(h('p', { class: 'small muted', style: 'margin:0' },
+        '記録はクラウドに保存されるので、機種変更してもそのまま続けられます。共有ジムで他の人と一緒に続けるにもアカウントが要ります。'),
+        h('p', { class: 'small muted', style: 'margin:0' }, '登録後に届く確認メールのリンクを開いてください。ログイン状態はこの端末に保持されます（共有の端末では使い終わったらログアウトしてください）。'));
     } else if (mode === 'login') {
       btn.textContent = 'ログイン';
       btn.onclick = () => valid() && run(async () => { sentTo = email.value.trim(); await cloud.signIn(sentTo, pw.value); });
@@ -1730,7 +1732,6 @@ function renderAuth() {
       btn.textContent = '再設定のメールを送る';
       btn.onclick = () => valid() && run(async () => { sentTo = email.value.trim(); await cloud.resetPassword(sentTo); draw('再設定のメールを送りました。リンクを開くと新しいパスワードを設定できます'); });
     }
-    body.append(h('button', { class: 'btn ghost block', onclick: () => { state.localOnly = true; persist(); location.hash = state.onboarded ? '#/gym' : '#/onboarding'; route(); } }, 'ログインせずにこの端末だけで使う'));
     wrap.append(hero, body);
     if (msg && mode !== 'forgot') pw.value = '';
   }
@@ -1779,7 +1780,6 @@ async function afterLogin() {
       state = { ...fresh(), ...keep };
     }
     state.userId = u.id;
-    state.localOnly = false;
     store.setUser(u.id);
     const [prof] = await Promise.all([cloud.fetchProfile(), store.pull()]);
     if (prof) {
@@ -1832,7 +1832,7 @@ function accountRows() {
   if (!cloud.enabled) return [h('div', {}, h('span', {}, 'アカウント'), h('span', { class: 'v' }, 'ログインなし（この端末だけ）'))];
   const u = cloud.user();
   if (!u) return [h('div', {}, h('span', {}, 'アカウント'), h('span', { class: 'v' }, 'ログインなし')),
-    h('button', { onclick: () => { state.localOnly = false; persist(); location.hash = '#/auth'; route(); } }, h('span', {}, 'ログイン・アカウント作成'), h('span', { class: 'v' }, '›'))];
+    h('button', { onclick: () => { location.hash = '#/auth'; route(); } }, h('span', {}, 'ログイン・アカウント作成'), h('span', { class: 'v' }, '›'))];
   const st = store.syncStatus();
   return [
     h('div', {}, h('span', {}, 'アカウント'), h('span', { class: 'v' }, u.email)),
