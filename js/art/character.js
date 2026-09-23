@@ -29,6 +29,30 @@ export function stageOf(part, lv) {
   return Math.min(2, Math.round((Math.max(0, lv - 1) / 2.5) * 10) / 10);
 }
 
+/* ---------- ポーズ（ジム画面だけで使う。成長・着せ替え・詳細は立ち姿のまま） ----------
+ * arm(s): ひじ・手首の位置 / leg(s): ひざ・足首・足の位置 / drop: 上半身を下げる量 / prop: 持ち物
+ * 座標は設計座標（中心 x=96）。s は -1=左 / +1=右 */
+export const POSES = [
+  { id: 'stand', name: '立つ' },
+  { id: 'curl', name: 'ダンベルカール' },
+  { id: 'raise', name: 'サイドレイズ' },
+  { id: 'press', name: 'ショルダープレス' },
+  { id: 'squat', name: 'スクワット' },
+  { id: 'row', name: 'ダンベルを持つ' },
+  { id: 'run', name: '走る' },
+  { id: 'stretch', name: 'ストレッチ' },
+];
+const POSE_DEF = {
+  stand: {},
+  curl: { arm: (s) => [2.4, 20, 7, 4], prop: 'dumbbell' },
+  raise: { arm: (s) => [13, 2, 25, -1], prop: 'dumbbell' },
+  press: { arm: (s) => [9, -7, 7, -20], prop: 'dumbbell' },
+  squat: { arm: (s) => [10, 6, 15, -5], prop: 'barbellBack', drop: 13, leg: 'squat' },
+  row: { arm: (s) => (s < 0 ? [3, 16, 6, 4] : [3.2, 14, 4, 26]), prop: 'dumbbellOne', lean: true },
+  run: { arm: (s) => (s < 0 ? [-2, 13, 3, 1] : [4, 16, 9, 25]), leg: 'run' },
+  stretch: { arm: (s) => [5, -8, 1, -24] },
+};
+
 export const DEFAULT_LOOK = {
   type: 'male',
   hairStyle: 'short',
@@ -41,6 +65,7 @@ export const DEFAULT_LOOK = {
   wristband: false,
   stages: { chest: 0, back: 0, shoulder: 0, arm: 0, leg: 0, abs: 0 },
   face: 'smile', // smile | joy | focus
+  pose: 'stand',
   frame: 0,
 };
 
@@ -231,20 +256,32 @@ export function drawCharacter(look, kind = 'detail') {
   const res = kind === 'gym' ? 96 : 192;
   const detail = kind === 'detail';
   const g = geometry(look, kind);
-  const half = Math.max(g.jointX + g.dRx, g.jointX + 5.6 + g.armR + 6) + 3; // 中心から一番外まで（設計座標）
+  const pose = (kind === 'gym' && POSE_DEF[look.pose]) || POSE_DEF.stand;
+  const dropY = pose.drop || 0;
+  // ひじ・手首の位置（ポーズごと）
+  const armPts = [-1, 1].map((s) => {
+    const jx = 96 + s * g.jointX;
+    const [dex, dey, dwx, dwy] = pose.arm ? pose.arm(s) : [3.2, 20, 6.2, 36];
+    return { s, jx, ex: jx + s * dex, eY: 91 + dey + dropY, wx: jx + s * dwx, wY: 91 + dwy + dropY };
+  });
+  const armFar = Math.max(...armPts.map((a) => Math.abs(a.wx - 96) + g.armR + 8));
+  const propFar = pose.prop === 'barbellUp' || pose.prop === 'barbellBack' ? g.jointX + 26 : pose.prop ? armFar + 6 : 0;
+  const half = Math.max(g.jointX + g.dRx, g.jointX + 5.6 + g.armR + 6, armFar, propFar) + 3; // 中心から一番外まで（設計座標）
   const pad = half > 95 ? Math.ceil(((half - 95) * res) / 192 / 2) * 2 : 0;
   const S = new Surface(res, pad);
   const st = g.st;
   const fem = g.fem;
   const bobPx = look.frame ? 1 : 0;
   const b = bobPx / S.s; // 上半身の上下（設計座標）
+  const bU = b + dropY; // 上半身（胴・腕・首・頭）の位置。スクワットなどでは下がる
+  const facePx = bobPx + Math.round(dropY * S.s); // 顔・髪の画素単位のずれ
 
   const skin = pickById(SKINS, look.skin).ramp;
   const hair = pickById(HAIR_COLORS, look.hairColor).ramp;
   const topC = clothRamp(pickById(CLOTH_COLORS, look.topColor).hex);
   const botC = clothRamp(pickById(CLOTH_COLORS, look.bottomColor).hex);
   const cx = 96;
-  const hx = 96, hy = 52 + b;
+  const hx = 96, hy = 52 + bU;
   const HP = hairParts(look.hairStyle, hx, hy);
   const hairN = sphereNormal(hx - 2, hy - 6, 34);
   // 毛束どうしの境目は柔らかい線（ジム用は線なしで塊として見せる）、顔や体との境目は濃い線
@@ -252,7 +289,7 @@ export function drawCharacter(look, kind = 'detail') {
   const hairLine = (grp, d) => (grp.startsWith('hair') ? (detail && d === 1 ? mix(hair[1], hair[2], 0.35) : null) : hair[0]);
   const buzzRamp = [hair[0], mix(hair[1], skin[1], 0.2), mix(hair[2], skin[2], 0.28), mix(hair[3], skin[3], 0.36), mix(hair[3], skin[4], 0.46)];
   // ジム用は頭部だけ 1.2 倍（顔を読める大きさにする。首元基準で縦横同率）
-  const headXf = kind === 'gym' ? { ox: 96, oy: 78 + b, k: 1.2 } : null;
+  const headXf = kind === 'gym' ? { ox: 96, oy: 78 + bU, k: 1.2 } : null;
 
   const paintHair = (list, prefix, baseBias) =>
     list.forEach((it, i) => {
@@ -285,28 +322,37 @@ export function drawCharacter(look, kind = 'detail') {
 
   /* 脚・靴 */
   const legY = 130;
+  // ポーズごとの [ひざX, ひざY, 足首X, 足首Y, 足X, 足Y]（X は腰からの差、+s が外向き）
+  const legJoint = (s) => {
+    if (pose.leg === 'squat') return [s * 6, 154, s * 5, 169, s * 7, 175.5];
+    if (pose.leg === 'run') return s < 0 ? [s * 5, 148, s * 10, 159, s * 13, 164] : [s * 3, 153, s * 6, 170, s * 8, 176];
+    return [s * 0.8, 152, s * 1.2, 168, s * 2.8, 175.5];
+  };
   for (const s of [-1, 1]) {
     const lx = cx + s * g.hipX;
     const grp = 'leg' + s;
-    const rr = g.thighR * 1.1;
+    const [kdx, kY, adx, aY, fdx, fY] = legJoint(s);
+    const hipY = legY + dropY;
+    const rr = g.thighR * 1.15;
+    const axis = (y) => (y < kY ? lx + ((kdx * (y - hipY)) / Math.max(1, kY - hipY)) : lx + kdx + ((adx - kdx) * (y - kY)) / Math.max(1, aY - kY));
     const cyl = (x, y) => {
-      const u = Math.max(-1, Math.min(1, (x - (lx + s * Math.min(1.2, (y - legY) * 0.03))) / rr));
+      const u = Math.max(-1, Math.min(1, (x - axis(y)) / rr));
       return [u, 0, Math.sqrt(1 - u * u)];
     };
-    S.paint(Cap(lx, legY, lx + s * 0.8, 152, g.thighR, g.thighR * 0.85), skin, grp, { normal: cyl });
-    S.paint(Cap(lx + s * 0.8, 152, lx + s * 1.2, 168, g.shinR, g.shinR * 0.78), skin, grp, { normal: cyl });
-    if (st.leg >= 1) S.paint(Ell(lx + s * 1.6, 159.5, g.shinR + 0.3, 5.5 + st.leg * 0.8), skin, grp, { normal: cyl });
-    S.paint(Cap(lx + s * 1.2, 168.5, lx + s * 1.2, 171, g.shinR * 0.78 + 0.6, g.shinR * 0.78 + 0.6), FIXED.sock, 'sock' + s, { hl: false });
-    const sx = lx + s * 2.8;
-    S.paint(Ell(sx, 175.5, 9.4 + st.leg * 0.4, 6), FIXED.shoe, 'shoe' + s, { clip: (x, y) => y < 179.5 });
-    S.paint(Rows(sx, 179, 181.5, () => 9.6 + st.leg * 0.4), FIXED.sole, 'shoe' + s, { hl: false, flat: 3 });
+    S.paint(Cap(lx, hipY, lx + kdx, kY, g.thighR, g.thighR * 0.85), skin, grp, { normal: cyl });
+    S.paint(Cap(lx + kdx, kY, lx + adx, aY, g.shinR, g.shinR * 0.78), skin, grp, { normal: cyl });
+    if (st.leg >= 1) S.paint(Ell(lx + (kdx + adx) / 2 + s * 0.6, (kY + aY) / 2 + 1, g.shinR + 0.3, 5.5 + st.leg * 0.8), skin, grp, { normal: cyl });
+    S.paint(Cap(lx + adx, aY + 0.5, lx + adx, aY + 3, g.shinR * 0.78 + 0.6, g.shinR * 0.78 + 0.6), FIXED.sock, 'sock' + s, { hl: false });
+    const sx = lx + fdx;
+    S.paint(Ell(sx, fY, 9.4 + st.leg * 0.4, 6), FIXED.shoe, 'shoe' + s, { clip: (x, y) => y < fY + 4 });
+    S.paint(Rows(sx, fY + 3.5, fY + 6, () => 9.6 + st.leg * 0.4), FIXED.sole, 'shoe' + s, { hl: false, flat: 3 });
     if (detail) {
       // ひざの影・靴ひも・靴のライン
-      const [kx, ky] = S.P(lx + s * 0.8 - 2, 151);
+      const [kx, ky] = S.P(lx + kdx - 2, kY - 1);
       S.stamp(kx, ky, ['.kk.', 'k..k'], { k: skin[2] });
-      const [qx, qy] = S.P(sx - 3, 171.5);
+      const [qx, qy] = S.P(sx - 3, fY - 4);
       S.stamp(qx, qy, ['LLLLL', '.L.L.'], { L: FIXED.shoe[1] });
-      const [tx, ty] = S.P(sx - 3 + s * 1.5, 176.5);
+      const [tx, ty] = S.P(sx - 3 + s * 1.5, fY + 1);
       S.stamp(tx, ty, ['TTTT'], { T: FIXED.teal[2] });
     }
   }
@@ -315,8 +361,8 @@ export function drawCharacter(look, kind = 'detail') {
   const pants = look.bottom === 'pants';
   const hemY = pants ? 167 : 146;
   S.paint(
-    Rows(cx, 117, 134, (y) => {
-      const t = (y - 117) / 17;
+    Rows(cx, 117 + dropY, 134 + dropY, (y) => {
+      const t = (y - 117 - dropY) / 17;
       return g.waistHW + 0.8 + (g.hipHW + 1.6 - g.waistHW - 0.8) * Math.min(1, t * 1.6);
     }),
     botC,
@@ -324,16 +370,20 @@ export function drawCharacter(look, kind = 'detail') {
   );
   for (const s of [-1, 1]) {
     const lx = cx + s * g.hipX;
+    const [kdx, kY, adx, aY] = legJoint(s);
+    const t = (v) => 132 + dropY + (kY - (132 + dropY)) * v; // 腰からひざまでの途中の高さ
     if (pants) {
-      S.paint(Cap(lx, 132, lx + s * 0.8, 152, g.thighR + 1.8, g.thighR * 0.85 + 1.6), botC, 'bottom', { lineWith: ['leg' + s, 'leg' + -s] });
-      S.paint(Cap(lx + s * 0.8, 152, lx + s * 1.2, hemY, g.shinR + 1.9, g.shinR * 0.78 + 1.7), botC, 'bottom', { lineWith: ['leg' + s, 'leg' + -s] });
-      S.paint(Rows(lx + s * 1.2, hemY - 1.5, hemY + 1.5, () => g.shinR * 0.78 + 2.1), botC, 'cuff' + s, { flat: 1 });
+      const hem = Math.min(hemY + dropY, aY - 1);
+      S.paint(Cap(lx, 132 + dropY, lx + kdx, kY, g.thighR + 1.8, g.thighR * 0.85 + 1.6), botC, 'bottom', { lineWith: ['leg' + s, 'leg' + -s] });
+      S.paint(Cap(lx + kdx, kY, lx + adx * (hem - kY) / Math.max(1, aY - kY), hem, g.shinR + 1.9, g.shinR * 0.78 + 1.7), botC, 'bottom', { lineWith: ['leg' + s, 'leg' + -s] });
+      S.paint(Rows(lx + adx * (hem - kY) / Math.max(1, aY - kY), hem - 1.5, hem + 1.5, () => g.shinR * 0.78 + 2.1), botC, 'cuff' + s, { flat: 1 });
     } else {
-      S.paint(Cap(lx, 132, lx + s * 1, 142.5, g.thighR + 2, g.thighR + 1.6), botC, 'bottom', { clip: (x, y) => y < hemY, lineWith: ['leg' + s, 'leg' + -s] });
+      const hem = Math.min(146 + dropY, kY - 2);
+      S.paint(Cap(lx, 132 + dropY, lx + kdx * 0.6, t(0.6), g.thighR + 2, g.thighR + 1.6), botC, 'bottom', { clip: (x, y) => y < hem, lineWith: ['leg' + s, 'leg' + -s] });
     }
     if (detail) {
       // 脇の白ライン
-      for (let y = 124; y <= (pants ? 164 : 144); y++) {
+      for (let y = 124 + dropY; y <= (pants ? 164 : 144) + dropY; y++) {
         const tx = pants ? cx + s * (g.hipX + (y < 152 ? g.thighR + 1.2 : g.shinR + 1.2)) + s * (y - 124) * 0.03 : cx + s * (g.hipHW + 1.2) + s * (y - 124) * 0.14;
         const [px, py] = S.P(tx, y);
         S.dot(px, py, mix(botC[4], '#ffffff', 0.55));
@@ -360,7 +410,7 @@ export function drawCharacter(look, kind = 'detail') {
 
   /* 胴 */
   const hwAt = (y) => {
-    const yy = y - b;
+    const yy = y - bU;
     if (yy < 88) return g.topHW * (0.8 + Math.sqrt(Math.max(0, (yy - 82) / 6)) * 0.2);
     if (yy < 102) return g.chestHW + st.back * 0.9 * Math.sin(((yy - 88) / 14) * Math.PI);
     if (yy < 116) {
@@ -371,28 +421,28 @@ export function drawCharacter(look, kind = 'detail') {
     const t = (yy - 116) / 12;
     return g.waistHW + (g.hipHW - g.waistHW) * t + (yy > 124 ? 0.8 : 0);
   };
-  const torso = Rows(cx, 82 + b, 128 + b, hwAt);
+  const torso = Rows(cx, 82 + bU, 128 + bU, hwAt);
   const tank = look.top === 'tank';
   if (tank) S.paint(torso, skin, 'torso');
   const tankClip = (x, y) => {
-    const yy = y - b;
+    const yy = y - bU;
     const ax = Math.abs(x - cx);
     if (((x - cx) / 9.5) ** 2 + ((yy - 82) / 11) ** 2 < 1) return false;
     if (yy < 95 && ax > 12.5 + st.chest * 0.6) return false;
     if (yy < 101 && ax > g.chestHW - 3 - (yy - 95) * -0.1 && yy < 95 + (ax - 12) * 0.5) return false;
     return true;
   };
-  const teeClip = (x, y) => ((x - cx) / 7.5) ** 2 + ((y - b - 82) / 3.8) ** 2 >= 1;
+  const teeClip = (x, y) => ((x - cx) / 7.5) ** 2 + ((y - bU - 82) / 3.8) ** 2 >= 1;
   S.paint(torso, topC, 'top', { clip: tank ? tankClip : teeClip, lineWith: ['bottom', 'torso'] });
   // 上衣の影が下衣に落ちる
   S.castShadow('bottom', 'top', detail ? 2 : 1, darker(botC));
 
   if (detail) {
     // すその折り返し・脇腹のしわ
-    S.tint('top', (x, y, c) => y - b > 125.5 && c !== topC[0], topC[2]);
+    S.tint('top', (x, y, c) => y - bU > 125.5 && c !== topC[0], topC[2]);
     for (const s of [-1, 1])
       for (let i = 0; i < 4; i++) {
-        const [px, py] = S.P(cx + s * (g.waistHW - 1.5 - i * 1.1), 112 + b + i * 0.9);
+        const [px, py] = S.P(cx + s * (g.waistHW - 1.5 - i * 1.1), 112 + bU + i * 0.9);
         const k = S.idx(px, py);
         if (k >= 0 && S.grp[k] === 'top') S.col[k] = topC[2];
       }
@@ -401,11 +451,11 @@ export function drawCharacter(look, kind = 'detail') {
       for (let x = -w; x <= w; x++) {
         const y = 101 + st.chest + Math.abs(x) * 0.12 - (Math.abs(x) > w - 3 ? (Math.abs(x) - w + 3) * 0.6 : 0);
         if (Math.abs(x) < 1.5) continue;
-        const [px, py] = S.P(cx + x, y + b);
+        const [px, py] = S.P(cx + x, y + bU);
         S.dot(px, py, topC[2]);
       }
       for (let y = 92; y <= 101 + st.chest; y++) {
-        const [px, py] = S.P(cx - 0.5, y + b);
+        const [px, py] = S.P(cx - 0.5, y + bU);
         S.dot(px, py, topC[2]);
       }
     }
@@ -414,35 +464,30 @@ export function drawCharacter(look, kind = 'detail') {
       rowsY.forEach((yy) => {
         for (const s of [-1, 1])
           for (let x = 2; x <= 6; x++) {
-            const [px, py] = S.P(cx + s * x - 0.5, yy + b);
+            const [px, py] = S.P(cx + s * x - 0.5, yy + bU);
             S.dot(px, py, topC[2]);
           }
       });
       if (st.abs >= 2)
         for (let y = 104; y <= 120; y++) {
-          const [px, py] = S.P(cx - 0.5, y + b);
+          const [px, py] = S.P(cx - 0.5, y + bU);
           S.dot(px, py, topC[2]);
         }
     }
     // 胸のダンベル印
     const ly = st.chest >= 1 && !fem ? 96 : 95;
     const lc = mix(topC[3], parseInt(topC[3].slice(1), 16) > 0x999999 ? '#1f2328' : '#ffffff', 0.55);
-    const [lx0, ly0] = S.P(cx - 5, ly + b);
+    const [lx0, ly0] = S.P(cx - 5, ly + bU);
     S.stamp(lx0, ly0, ['LL....LL', 'LLLLLLLL', 'LL....LL'], { L: lc });
   }
 
   /* 首（肩より先に描く: 巨大な肩の上に首が浮かないように） */
-  S.paint(Cap(cx, 72 + b, cx, 84 + b, 6.2 + st.back * 0.5 - (fem ? 0.6 : 0), 6.8 + st.back * 0.7 - (fem ? 0.6 : 0)), skin, 'neck', { bias: -0.2, hl: false });
+  S.paint(Cap(cx, 72 + bU, cx, 84 + bU, 6.2 + st.back * 0.5 - (fem ? 0.6 : 0), 6.8 + st.back * 0.7 - (fem ? 0.6 : 0)), skin, 'neck', { bias: -0.2, hl: false });
 
   /* 腕（少し外へ開き、軽く握った手） */
-  const jY = Math.max(84, 91 - (g.dRx - 8) * 0.18) + b;
+  const jY = Math.max(84, 91 - (g.dRx - 8) * 0.18) + bU;
   const arms = [];
-  for (const s of [-1, 1]) {
-    const jx = cx + s * g.jointX;
-    const ex = jx + s * 3.2;
-    const eY = 111 + b;
-    const wx = ex + s * 3;
-    const wY = 127 + b;
+  for (const { s, jx, ex, eY, wx, wY } of armPts) {
     const grp = 'arm' + s;
     // 腕全体を1本の円柱として陰影を付ける（部品ごとに陰影がずれて段々に見えるのを防ぐ）
     const axis = (y) => (y < eY ? jx + ((ex - jx) * (y - jY)) / (eY - jY) : ex + ((wx - ex) * (y - eY)) / (wY - eY));
@@ -452,7 +497,11 @@ export function drawCharacter(look, kind = 'detail') {
       return [u, 0, Math.sqrt(1 - u * u)];
     };
     S.paint(Cap(jx, jY + 4, ex, eY, g.armR, g.armR * 0.86), skin, grp, { normal: cyl });
-    if (st.arm >= 1 || !fem) S.paint(Ell(jx + s * 0.2, 102 + b, g.armR * 1.02 + st.arm * 0.4, 6.5 + st.arm * 1.4), skin, grp, { normal: cyl });
+    // 力こぶ（上腕の中ほど）
+    if (st.arm >= 1 || !fem) {
+      const t = 0.55;
+      S.paint(Ell(jx + (ex - jx) * t, jY + 4 + (eY - jY - 4) * t, g.armR * 1.02 + st.arm * 0.4, 6.5 + st.arm * 1.4), skin, grp, { normal: cyl });
+    }
     S.paint(Cap(ex, eY, wx, wY, g.armR * 0.92, g.armR * 0.68), skin, grp, { normal: cyl });
     if (look.wristband) S.paint(Rows(wx, wY - 3.4, wY - 0.2, () => g.armR * 0.68 + 1.3), FIXED.teal, 'band' + s);
     const hand = 'hand' + s;
@@ -463,7 +512,7 @@ export function drawCharacter(look, kind = 'detail') {
       S.stamp(fx, fy, ['f.f.f', '.....', 'f.f.f'].map((r) => r), { f: skin[1] });
       S.paint(Ell(wx - s * 2.6, wY + 2.8, 2.3, 2.8), skin, hand + 't', { lineWith: [hand] });
     }
-    arms.push({ s, jx, grp, cyl });
+    arms.push({ s, jx, grp, cyl, wx, wY });
   }
   /* 三角筋と袖 */
   for (const { s, jx, grp, cyl } of arms) {
@@ -484,6 +533,23 @@ export function drawCharacter(look, kind = 'detail') {
     }
   }
 
+  /* 小道具（バーベル・ダンベル） */
+  const BAR = ['#22262c', '#5b646f', '#79838f', '#98a3af', '#c2cbd4'];
+  const PLATE = ['#0c0e11', '#1b1f24', '#24292f', '#31373f', '#454d57'];
+  const dumbbell = (x, y) => {
+    S.paint(Rows(x, y - 1.6, y + 1.6, () => 7.5), BAR, 'db' + x, { hl: false });
+    for (const d of [-1, 1]) S.paint(Ell(x + d * 7, y, 2.6, 6.2), PLATE, 'dbp' + x + d);
+  };
+  const barbell = (y, halfLen) => {
+    S.paint(Rows(cx, y - 1.4, y + 1.4, () => halfLen), BAR, 'bar', { hl: false });
+    for (const d of [-1, 1]) {
+      S.paint(Ell(cx + d * (halfLen - 3), y, 3, 9.5), PLATE, 'plate' + d);
+      S.paint(Ell(cx + d * (halfLen - 8), y, 2.4, 7), PLATE, 'plate2' + d);
+    }
+  };
+  // 背中側に担ぐバーベルは頭より先に描く（頭の後ろに回る）
+  if (pose.prop === 'barbellBack') barbell(jY - 3, g.jointX + 22);
+
   /* 頭 */
   S.xf = headXf;
   for (const s of [-1, 1]) S.paint(Ell(hx + s * 23.6, hy + 9, 3.4, 5), skin, 'ear' + s);
@@ -493,7 +559,7 @@ export function drawCharacter(look, kind = 'detail') {
   S.castShadow('neck', 'head', detail ? 3 : 1, () => skin[1]);
 
   /* 顔 */
-  drawFace(S, look, kind, skin, hair, bobPx);
+  drawFace(S, look, kind, skin, hair, facePx);
 
   /* 前髪 */
   paintHair(HP.front, 'hairF', 0.05);
@@ -518,6 +584,10 @@ export function drawCharacter(look, kind = 'detail') {
   });
   HP.ties.forEach(([tx, ty], i) => S.paint(Ell(tx, ty, 3.8, 3.8), FIXED.teal, 'tie' + i));
   S.xf = null;
+
+  if (pose.prop === 'dumbbell') arms.forEach((a) => dumbbell(a.wx + a.s * 1.2, a.wY + 4));
+  if (pose.prop === 'dumbbellOne') dumbbell(arms[1].wx + 1.2, arms[1].wY + 4);
+  if (pose.prop === 'barbellUp') barbell(arms[0].wY + 1, g.jointX + 22);
 
   S.outline(kind === 'gym' ? 2 : 1);
   return { canvas: S.toCanvas(), shoulderWidth: g.shoulderWidth, res };

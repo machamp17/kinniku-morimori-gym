@@ -96,6 +96,7 @@ export function demoMembers(count) {
       contentVisible: r() > 0.25,
       title: shoulder >= 40 ? '改札は横歩き' : shoulder >= 22 ? 'ドアに少し引っかかる' : shoulder >= 15 ? '肩だけ異世界' : shoulder >= 9 ? '横幅注意' : pick(['はじめの一歩', 'コツコツ見習い', '習慣の達人']),
       recordedMinAgo: Math.floor(r() * 23 * 60),
+      pose: pick(['stand', 'curl', 'raise', 'press', 'squat', 'row', 'run', 'stretch', 'stand', 'squat', 'curl']),
       comment: COMMENTS[i % COMMENTS.length],
       menu: MENUS[i % MENUS.length],
       nice: Math.floor(r() * 15),

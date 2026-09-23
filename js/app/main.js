@@ -428,6 +428,14 @@ function safeLook(l) {
     stages: { chest: num(st.chest, 2), back: num(st.back, 2), shoulder: Math.round(num(st.shoulder, 60)), arm: num(st.arm, 2), leg: num(st.leg, 2), abs: num(st.abs, 2) },
   };
 }
+// ジムでのポーズ。その人が直近に鍛えた部位から決める（内容が非公開の人は立ち姿）
+const POSE_BY_PART = { 胸: 'press', 背中: 'row', 肩: 'raise', 脚: 'squat', 腕: 'curl', 腹: 'stretch', 有酸素: 'run' };
+function poseOf(m) {
+  if (m.pose) return m.pose;
+  const part = m.menu && m.menu.length ? m.menu[0][0] : null;
+  return POSE_BY_PART[part] || 'stand';
+}
+
 function bodyTags(look) {
   const st = (look && look.stages) || {};
   const sh = Math.round(st.shoulder || 0);
@@ -510,7 +518,7 @@ function renderGym() {
     list.map((m, i) => [m, posOf(i)]).sort((a, b) => a[1][1] - b[1][1]).forEach(([m, [x, y]]) => {
       const label = `${m.nameVisible ? m.name : 'トレーニー'}、${m.title}、${agoLabel(m.recordedMinAgo)}`;
       const b = h('button', { class: 'slot' + (m.me ? ' me' : ''), style: `left:${x}%;top:${y}%`, 'aria-pressed': String(selected === m.id), 'aria-label': label, onclick: () => { selected = m.id; drawStage(); openMember(m); } },
-        charEl(m.look, 'gym', { label }));
+        charEl({ ...m.look, pose: poseOf(m) }, 'gym', { label }));
       stage.append(b);
     });
     drawBubbles();

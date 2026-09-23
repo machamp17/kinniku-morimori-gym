@@ -17,7 +17,7 @@ globalThis.document = {
   },
 };
 
-const { drawCharacter, DEFAULT_LOOK, FACES } = await import('../js/art/character.js');
+const { drawCharacter, DEFAULT_LOOK, FACES, POSES } = await import('../js/art/character.js');
 const P = await import('../js/art/palette.js');
 
 const MALE = { ...DEFAULT_LOOK, type: 'male', hairStyle: 'short', hairColor: 'darkbrown', skin: 'skin2', topColor: 'black', bottomColor: 'charcoal' };
@@ -28,6 +28,7 @@ const ST2 = { chest: 2, back: 2, shoulder: 20, arm: 2, leg: 2, abs: 2 };
 
 const presets = {
   faces: () => [MALE, FEMALE].flatMap((b) => FACES.map((f) => [{ ...b, face: f.id }, 'detail'])),
+  poses: () => [MALE, FEMALE].flatMap((b) => POSES.map((p) => [{ ...b, pose: p.id, stages: { chest: 1, back: 1, shoulder: 6, arm: 1.5, leg: 1, abs: 1 } }, 'gym'])),
   gymfaces: () => [MALE, FEMALE].flatMap((b) => FACES.map((f) => [{ ...b, face: f.id }, 'gym'])),
   stages: () => [MALE, FEMALE].flatMap((b) => [ST0, ST1, ST2].map((s) => [{ ...b, stages: s }, 'detail'])),
   shoulders: () => [MALE, FEMALE].flatMap((b) => [0, 3, 6, 10, 13, 16, 20].map((i) => [{ ...b, stages: { ...ST0, shoulder: i } }, 'detail'])),
