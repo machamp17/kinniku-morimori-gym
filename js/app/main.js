@@ -307,14 +307,7 @@ function renderOnboarding() {
   function draw() {
     fill(wrap);
     window.scrollTo(0, 0);
-    if (step === 0) wrap.append(h('div', { class: 'onb-hero' },
-      charEl({ ...DEFAULT_LOOK, ...typeDefaults('male'), type: 'male' }, 'gym', { label: '男性キャラクター', css: 96 }),
-      charEl({ ...DEFAULT_LOOK, ...typeDefaults('female'), type: 'female' }, 'gym', { label: '女性キャラクター', css: 96 }),
-      (() => {
-        const t = h('h1', {}, h('span', { class: 'logo-text' }, '筋肉モリモリジム'));
-        setTimeout(() => mountLogo(t, { heightCss: 44 }), 0);
-        return t;
-      })()));
+    if (step === 0) wrap.append(heroBlock());
     const body = h('div', { class: 'pad stack' });
     body.append(h('div', { class: 'onb-steps', 'aria-label': `全${STEPS}ステップ中 ${step + 1}` }, ...Array.from({ length: STEPS }, (_, i) => h('i', { class: i <= step ? 'on' : '' }))));
     const next = h('button', { class: 'btn primary lg', style: 'flex:2' }, step === STEPS - 1 ? 'はじめる' : '次へ');
@@ -410,6 +403,26 @@ const SLOT_ORDER = [9, 2, 15, 6, 17, 0, 11, 13, 4, 19, 7, 1, 14, 10, 5, 18, 3, 1
 const posOf = (i) => SLOTS[SLOT_ORDER[i]];
 // 壁の文言（依頼者指定）。どれも9文字で、縦書き3文字×3列にきれいに収まる
 const POSTERS = ['こつこつひたむきに', 'あの頃を取り戻そう', 'あなたは出来る必ず'];
+const POSTER_X = [31.3, 44.2, 57.1]; // 背景のポスター枠の位置（画像の幅に対する%）
+// 壁のポスター1枚。3文字ずつ改行して、縦書き3文字×3列の正方形に収める
+const posterEl = (text, x) => {
+  const sp = h('span', {});
+  (text.match(/.{1,3}/gu) || [text]).forEach((t, k) => { if (k) sp.append(h('br')); sp.append(t); });
+  return h('div', { class: 'poster', style: `left:${x}%` }, sp);
+};
+// ログイン・初期設定の上に出すジムの絵（壁のポスターと、トレーニング中の2人）
+function heroBlock() {
+  const title = h('h1', {}, h('span', { class: 'logo-text' }, '筋肉モリモリジム'));
+  setTimeout(() => mountLogo(title, { heightCss: 44 }), 0);
+  const trainee = (type, pose, label) => charEl(
+    { ...DEFAULT_LOOK, ...typeDefaults(type), type, pose, stages: { chest: 1, back: 1, shoulder: 6, arm: 1.2, leg: 1, abs: 1 } },
+    'gym', { label, css: 96 });
+  return h('div', { class: 'onb-hero' },
+    h('div', { class: 'hero-wall' }, ...POSTER_X.map((x, i) => posterEl(POSTERS[i], x))),
+    trainee('male', 'squat', 'バーベルを担ぐ男性キャラクター'),
+    trainee('female', 'curl', 'ダンベルを持つ女性キャラクター'),
+    title);
+}
 
 // 他人から届いた見た目は信用せず、知っている項目・範囲だけ使う
 function safeLook(l) {
@@ -517,13 +530,7 @@ function renderGym() {
     if (page >= pages()) page = pages() - 1;
     fill(stage);
     // ポスター（読めるテキストとして配置）
-    [31.3, 44.2, 57.1].forEach((x, i) => {
-      // 3文字ずつ改行して、縦書き3文字×3列の正方形に収める
-      const lines = POSTERS[i].match(/.{1,3}/gu) || [POSTERS[i]];
-      const sp = h('span', {});
-      lines.forEach((t, k) => { if (k) sp.append(h('br')); sp.append(t); });
-      stage.append(h('div', { class: 'poster', style: `left:${x}%` }, sp));
-    });
+    POSTER_X.forEach((x, i) => stage.append(posterEl(POSTERS[i], x)));
     const list = pageMembers();
     if (loading) stage.append(h('div', { class: 'empty gym-empty' }, h('b', {}, '読み込み中…')));
     else if (loadError) stage.append(h('div', { class: 'empty gym-empty' }, h('b', {}, '読み込めませんでした'), loadError, h('br'), h('button', { class: 'btn', style: 'margin-top:8px', onclick: refresh }, 'もう一度')));
@@ -1674,17 +1681,20 @@ function renderCharacterSettings() {
 /* ============================================================
  * ログイン（Supabase Auth）
  * ============================================================ */
+// メールアドレスだけ端末に覚える（パスワードは覚えない。パスワードはブラウザの保存機能に任せる）
+const MAIL_KEY = 'kmg2.auth.email';
+const savedMail = () => { try { return localStorage.getItem(MAIL_KEY) || ''; } catch (e) { return ''; } };
+const rememberMail = (mail, on) => { try { on && mail ? localStorage.setItem(MAIL_KEY, mail) : localStorage.removeItem(MAIL_KEY); } catch (e) {} };
+
 function renderAuth() {
-  let mode = 'signup'; // signup | login | forgot | sent
-  let sentTo = '';
+  let mode = savedMail() ? 'login' : 'signup'; // signup | login | forgot | sent
+  let sentTo = savedMail();
+  let remember = true; // 初期はオン。切ると次回から空欄で開く
   const wrap = h('div', { class: 'onb' });
   view.append(wrap);
   function draw(msg = '', bad = false) {
     fill(wrap);
-    const hero = h('div', { class: 'onb-hero' },
-      charEl({ ...DEFAULT_LOOK, ...typeDefaults('male'), type: 'male' }, 'gym', { label: '男性キャラクター', css: 96 }),
-      charEl({ ...DEFAULT_LOOK, ...typeDefaults('female'), type: 'female' }, 'gym', { label: '女性キャラクター', css: 96 }),
-      (() => { const t = h('h1', {}, h('span', { class: 'logo-text' }, '筋肉モリモリジム')); setTimeout(() => mountLogo(t, { heightCss: 44 }), 0); return t; })());
+    const hero = heroBlock();
     const body = h('div', { class: 'pad stack' });
     const email = h('input', { class: 'in', id: 'au-mail', type: 'email', autocomplete: 'email', inputmode: 'email', placeholder: 'you@example.com', value: sentTo });
     const pw = h('input', { class: 'in', id: 'au-pw', type: 'password', autocomplete: mode === 'signup' ? 'new-password' : 'current-password', placeholder: '8文字以上' });
@@ -1706,9 +1716,16 @@ function renderAuth() {
     body.append(h('div', { class: 'seg', role: 'tablist' },
       h('button', { role: 'tab', 'aria-selected': String(mode === 'signup'), onclick: () => { mode = 'signup'; draw(); } }, 'はじめる'),
       h('button', { role: 'tab', 'aria-selected': String(mode === 'login' || mode === 'forgot'), onclick: () => { mode = 'login'; draw(); } }, 'ログイン')));
-    body.append(h('label', { class: 'field', for: 'au-mail' }, h('span', {}, 'メールアドレス'), email));
-    if (mode !== 'forgot') body.append(h('label', { class: 'field', for: 'au-pw' }, h('span', {}, 'パスワード（8文字以上）'), pw));
-    body.append(note, btn);
+    const keep = h('input', { type: 'checkbox', id: 'au-keep', role: 'switch' });
+    keep.checked = remember;
+    keep.onchange = () => (remember = keep.checked);
+    const form = h('form', { class: 'stack', onsubmit: (e) => { e.preventDefault(); btn.click(); } },
+      h('label', { class: 'field', for: 'au-mail' }, h('span', {}, 'メールアドレス'), email),
+      mode !== 'forgot' ? h('label', { class: 'field', for: 'au-pw' }, h('span', {}, 'パスワード（8文字以上）'), pw) : null,
+      mode !== 'forgot' ? h('label', { class: 'toggle', for: 'au-keep' },
+        h('span', {}, 'メールアドレスを覚える', h('br'), h('small', { class: 'muted' }, '次から入力しなくて済みます')), keep) : null,
+      note, btn);
+    body.append(form);
     const valid = () => {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim())) { draw('メールアドレスの形式を確認してください', true); return false; }
       if (mode !== 'forgot' && pw.value.length < 8) { sentTo = email.value.trim(); draw('パスワードは8文字以上にしてください', true); return false; }
@@ -1719,6 +1736,7 @@ function renderAuth() {
       btn.onclick = () => valid() && run(async () => {
         sentTo = email.value.trim();
         const r = await cloud.signUp(sentTo, pw.value);
+        rememberMail(sentTo, remember);
         if (r.needsConfirm) { mode = 'sent'; draw(); }
       });
       body.append(h('p', { class: 'small muted', style: 'margin:0' },
@@ -1726,8 +1744,9 @@ function renderAuth() {
         h('p', { class: 'small muted', style: 'margin:0' }, '登録後に届く確認メールのリンクを開いてください。ログイン状態はこの端末に保持されます（共有の端末では使い終わったらログアウトしてください）。'));
     } else if (mode === 'login') {
       btn.textContent = 'ログイン';
-      btn.onclick = () => valid() && run(async () => { sentTo = email.value.trim(); await cloud.signIn(sentTo, pw.value); });
-      body.append(h('button', { class: 'btn ghost block', onclick: () => { sentTo = email.value.trim(); mode = 'forgot'; draw(); } }, 'パスワードを忘れた'));
+      btn.onclick = () => valid() && run(async () => { sentTo = email.value.trim(); await cloud.signIn(sentTo, pw.value); rememberMail(sentTo, remember); });
+      body.append(h('button', { class: 'btn ghost block', onclick: () => { sentTo = email.value.trim(); mode = 'forgot'; draw(); } }, 'パスワードを忘れた'),
+        h('p', { class: 'small muted', style: 'margin:0' }, '一度ログインすれば、ログアウトするまでこの端末では入力なしで開けます。パスワードはブラウザの「パスワードを保存しますか？」で保存すると、次から自動で入ります。'));
     } else {
       btn.textContent = '再設定のメールを送る';
       btn.onclick = () => valid() && run(async () => { sentTo = email.value.trim(); await cloud.resetPassword(sentTo); draw('再設定のメールを送りました。リンクを開くと新しいパスワードを設定できます'); });
