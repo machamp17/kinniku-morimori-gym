@@ -10,6 +10,7 @@ import {
 import { mountLogo } from './logo.js';
 import * as store from './store.js';
 import * as cloud from './cloud.js';
+import { findNgWord, NG_MESSAGE } from './ngwords.js';
 
 /* ---------- 状態 ---------- */
 const KEY = 'kmg2.demo.state';
@@ -256,6 +257,7 @@ const routes = {
   '/growth': renderGrowth,
   '/settings': renderSettings,
   '/settings/character': renderCharacterSettings,
+  '/settings/admin': renderAdmin,
   '/auth': renderAuth,
   '/auth/reset': renderPasswordReset,
 };
@@ -279,7 +281,7 @@ function route() {
   $('#btn-back').hidden = !sub;
   $('#btn-settings').hidden = sub;
   const tt = $('#top-title');
-  const subTitle = path === '/settings' ? '設定' : path === '/settings/character' ? 'キャラクター設定' : null;
+  const subTitle = path === '/settings' ? '設定' : path === '/settings/character' ? 'キャラクター設定' : path === '/settings/admin' ? '運営メニュー' : null;
   tt.classList.remove('has-logo');
   tt.querySelector('canvas')?.remove();
   fill(tt, h('span', { class: 'logo-text' }, subTitle || '筋肉モリモリジム'));
@@ -291,7 +293,7 @@ function route() {
 }
 window.addEventListener('hashchange', route);
 $('#btn-settings').addEventListener('click', () => (location.hash = '#/settings'));
-$('#btn-back').addEventListener('click', () => (location.hash = location.hash === '#/settings/character' ? '#/settings' : '#/gym'));
+$('#btn-back').addEventListener('click', () => (location.hash = location.hash.startsWith('#/settings/') ? '#/settings' : '#/gym'));
 
 /* ============================================================
  * 初期設定
@@ -328,6 +330,7 @@ function renderOnboarding() {
       next.onclick = () => {
         const v = inp.value.trim();
         if (!v || [...v].length > 16) { err.textContent = '表示名を1〜16文字で入力してください'; inp.focus(); return; }
+        if (findNgWord(v)) { err.textContent = NG_MESSAGE; inp.focus(); return; }
         draft.name = v; step++; draw();
       };
     } else if (step === 1) {
@@ -653,10 +656,16 @@ function renderGym() {
     }
     async function doReport() {
       if (!cloudMode) { toast('見本の人は通報できません'); return; }
-      const reason = await confirmDialog('通報する', '不快・不適切な内容として運営に知らせます。理由を選んでください。', [
+      const reason = await confirmDialog('通報する', '不快・不適切な内容として運営に知らせます。通報した人は、あなたのジムには表示されなくなります。', [
         { label: 'やめる', value: null }, { label: 'ひとことが不適切', value: 'comment' }, { label: '名前が不適切', value: 'name' }, { label: 'その他', value: 'other', primary: true }]);
       if (!reason) return;
-      try { await cloud.report(m.id, reason); toast('通報しました。運営が確認します'); } catch (e) { toast(e.message, true); }
+      try {
+        await cloud.report(m.id, reason);
+        await cloud.block(m.id).catch(() => {}); // 通報した相手はもう見せない
+        sh.close();
+        toast('通報しました。運営が確認します');
+        refresh();
+      } catch (e) { toast(e.message, true); }
     }
     function draw() {
       fill(body, 
@@ -1012,8 +1021,12 @@ function goRecord() {
 function openCommentSheet() {
   const text = h('textarea', { class: 'in', id: 'cm-text', rows: 2, maxlength: 40, placeholder: '例: 今日は軽めにストレッチ' });
   const cnt = h('span', { class: 'muted small' }, '0/40');
-  text.addEventListener('input', () => (cnt.textContent = `${[...text.value].length}/40`));
   const err = h('p', { class: 'err', role: 'alert', style: 'margin:0' });
+  // 打っている途中で教える（投稿ボタンを押すまで分からないと直しにくいため）
+  text.addEventListener('input', () => {
+    cnt.textContent = `${[...text.value].length}/40`;
+    err.textContent = findNgWord(text.value) ? NG_MESSAGE : '';
+  });
   const joinBox = h('input', { type: 'checkbox', id: 'cm-join', role: 'switch' });
   joinBox.checked = true;
   const body = h('div', { class: 'sheet-body stack' },
@@ -1437,6 +1450,13 @@ function openDressSheet() {
  * ============================================================ */
 function renderSettings() {
   const p = state.privacy;
+  // 運営メニューは管理者だけに出す（サーバーに聞いてから足す）
+  const adminBox = h('div', {});
+  cloud.isAdmin().then((yes) => {
+    if (!yes || !adminBox.isConnected) return;
+    fill(adminBox, h('h2', { class: 'sec' }, '運営', h('small', {}, '管理者にだけ表示されます')),
+      h('div', { class: 'list' }, h('a', { href: '#/settings/admin' }, h('span', {}, '運営メニュー'), h('span', { class: 'v' }, '通報・ひとこと・言葉 ›'))));
+  }).catch(() => {});
   view.append(h('div', { class: 'pad stack' },
     h('div', { class: 'list' },
       h('a', { href: '#/settings/character' }, h('span', {}, 'キャラクター設定'), h('span', { class: 'v' }, `タイプ: ${state.profile.look.type === 'female' ? '女性' : '男性'} ›`)),
@@ -1464,7 +1484,118 @@ function renderSettings() {
       h('a', { class: 'btn block', href: 'art-sheet.html' }, 'キャラ見本シートを開く'),
       h('button', { class: 'btn block', onclick: () => { state.onboarded = false; persist(); location.hash = '#/onboarding'; } }, '初期設定をやり直す'),
     ),
+    adminBox,
   ));
+}
+
+/* ============================================================
+ * 運営メニュー（管理者だけ。誰が管理者かはサーバーの admins 表で決まる）
+ * ============================================================ */
+const REASON_LABEL = { comment: 'ひとことが不適切', name: '名前が不適切', other: 'その他' };
+const whenLabel = (iso) => {
+  const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+  return m < 1 ? 'たった今' : m < 60 ? `${m}分前` : m < 1440 ? `${Math.floor(m / 60)}時間前` : `${Math.floor(m / 1440)}日前`;
+};
+
+function renderAdmin() {
+  const box = h('div', { class: 'pad stack' });
+  view.append(box);
+  let tab = 'reports';
+  let busy = false;
+
+  // fn が false を返したら「取りやめ」として何もしない
+  const run = async (fn, okMsg) => {
+    if (busy) return;
+    busy = true;
+    try {
+      if ((await fn()) === false) return;
+      if (okMsg) toast(okMsg);
+      await draw();
+    } catch (e) { toast(e.message || 'できませんでした', true); } finally { busy = false; }
+  };
+  const clearComment = (row) => run(async () => {
+    const ok = await confirmDialog('ひとことを削除', `「${row.comment}」を消します。トレーニングの記録そのものは本人のものなので残ります。`,
+      [{ label: 'やめる', value: null }, { label: '削除する', value: true, primary: true }]);
+    if (!ok) return false;
+    await cloud.adminClearComment(row.workout_id);
+  }, 'ひとことを削除しました');
+  const suspend = (row) => run(async () => {
+    const on = !row.suspended;
+    const ok = await confirmDialog(on ? '共有ジムから外す' : '共有ジムに戻す',
+      on ? 'この人のキャラとひとことを、全員のジムに表示しないようにします。本人の記録は消えません。' : 'この人を全員のジムに表示できるようにします。',
+      [{ label: 'やめる', value: null }, { label: on ? '外す' : '戻す', value: true, primary: true }]);
+    if (!ok) return false;
+    await cloud.adminSetSuspended(row.target_user, on);
+  }, '変更しました');
+
+  function rowCard(row, extra) {
+    return h('div', { class: 'card stack', style: 'gap:6px' },
+      h('div', { class: 'small muted' }, `${row.display_name || '名前なし'}・${whenLabel(row.created_at || row.posted_at)}`,
+        row.suspended ? h('b', { style: 'color:var(--danger,#e06)' }, '（停止中）') : null),
+      h('div', {}, row.comment ? row.comment : h('span', { class: 'muted' }, 'ひとことなし')),
+      extra,
+      h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' },
+        row.comment ? h('button', { class: 'btn', onclick: () => clearComment(row) }, 'ひとことを削除') : null,
+        h('button', { class: 'btn ghost', onclick: () => suspend(row) }, row.suspended ? '共有ジムに戻す' : '共有ジムから外す')));
+  }
+
+  async function drawReports() {
+    const rows = await cloud.adminReports();
+    if (!rows.length) return [h('div', { class: 'card muted' }, '未対応の通報はありません。')];
+    return rows.map((r) => {
+      const card = rowCard(r, h('div', { class: 'small' }, `理由: ${REASON_LABEL[r.reason] || r.reason || '未記入'}　この人への通報 ${r.reports_total} 件`));
+      card.append(h('div', { style: 'display:flex;gap:8px' },
+        h('button', { class: 'btn ghost', style: 'flex:1', onclick: () => run(() => cloud.adminResolveReport(r.report_id, 'resolved'), '対応済みにしました') }, '対応済み'),
+        h('button', { class: 'btn ghost', style: 'flex:1', onclick: () => run(() => cloud.adminResolveReport(r.report_id, 'rejected'), '問題なしにしました') }, '問題なし')));
+      return card;
+    });
+  }
+  async function drawComments() {
+    const rows = await cloud.adminComments();
+    if (!rows.length) return [h('div', { class: 'card muted' }, 'この7日間のひとことはありません。')];
+    return rows.map((r) => rowCard(r, null));
+  }
+  async function drawWords() {
+    const rows = await cloud.adminNgWords();
+    const inp = h('input', { class: 'in', style: 'flex:1', placeholder: '例: ばかやろう', maxlength: 40 });
+    const add = () => run(async () => {
+      if (!inp.value.trim()) throw { quiet: true };
+      await cloud.adminNgWord(inp.value, true);
+    }, '追加しました');
+    return [
+      h('p', { class: 'small muted', style: 'margin:0' }, 'ここに入れた言葉は、ひとことと表示名に使えなくなります（全角・カタカナ・伏せ字にしても弾きます）。'),
+      h('div', { style: 'display:flex;gap:8px' }, inp, h('button', { class: 'btn primary', onclick: add }, '追加')),
+      h('div', { class: 'card', style: 'display:flex;flex-wrap:wrap;gap:6px' },
+        ...rows.map((w) => h('button', {
+          class: 'btn ghost', style: 'padding:4px 10px', title: '外す',
+          onclick: () => run(async () => {
+            const ok = await confirmDialog('言葉を外す', `「${w.word}」を使えるように戻します。`, [{ label: 'やめる', value: null }, { label: '外す', value: true, primary: true }]);
+            if (!ok) throw { quiet: true };
+            await cloud.adminNgWord(w.word, false);
+          }, '外しました'),
+        }, w.word, ' ✕'))),
+    ];
+  }
+
+  async function draw() {
+    const tabs = h('div', { class: 'seg', role: 'tablist' },
+      ...[['reports', '通報'], ['comments', 'ひとこと'], ['words', '使えない言葉']].map(([id, name]) =>
+        h('button', { role: 'tab', 'aria-selected': String(tab === id), onclick: () => { tab = id; draw(); } }, name)));
+    fill(box, tabs, h('div', { class: 'card muted' }, '読み込み中…'));
+    if (!(await cloud.isAdmin())) {
+      fill(box, h('div', { class: 'card' }, '運営の権限がありません。'));
+      return;
+    }
+    let items;
+    try {
+      items = tab === 'reports' ? await drawReports() : tab === 'comments' ? await drawComments() : await drawWords();
+    } catch (e) {
+      items = [h('div', { class: 'card' }, h('span', { class: 'err' }, e.message || '読み込めませんでした'))];
+    }
+    if (location.hash !== '#/settings/admin') return;
+    fill(box, tabs, ...items);
+  }
+  draw();
 }
 
 function dataCard() {

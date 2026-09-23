@@ -40,9 +40,38 @@
 この2つはアプリに組み込まれて誰でも見られる前提の値なので、チャットに貼って大丈夫です。
 **`secret` / `service_role` と書かれた鍵は絶対に貼らないでください。**
 
+## 5. 自分を「運営」にする（通報の確認・ひとことの削除ができるようになる）
+
+アプリにログインして初期設定まで終えてから、「SQL Editor」で1回だけ実行します。
+
+```sql
+insert into public.admins (user_id)
+select id from auth.users where email = 'あなたのメールアドレス'
+on conflict do nothing;
+```
+
+アプリを開き直すと、**設定 → 運営メニュー**が出ます（管理者にだけ表示されます）。ここでできること:
+
+- **通報**: 誰のどのひとことが、どんな理由で通報されたか。その場で「ひとことを削除」「共有ジムから外す」「対応済み」
+- **ひとこと**: 通報が無くても、直近7日の公開中のひとことを見回れます
+- **使えない言葉**: 言葉を足すと、その言葉を含むひとことと表示名が保存できなくなります（全角・カタカナ・伏せ字にしても弾きます）
+
+アプリを使わずダッシュボードから直接やる場合:
+
+```sql
+-- ひとことだけ消す（トレーニングの記録は残す）
+update public.workouts set public_comment = null where id = 'ここに workout の id';
+-- 共有ジムから外す / 戻す
+update public.profiles set suspended = true  where user_id = 'ここに user の id';
+update public.profiles set suspended = false where user_id = 'ここに user の id';
+-- 使えない言葉を足す（ひらがな・小文字・記号なしで入れる）
+insert into public.ng_words (word) values ('ばかやろう') on conflict do nothing;
+```
+
 ## 知っておくこと
 
 - Supabase 標準のメール送信は1時間あたりの送信数が少ない制限があります。身内で試す分には十分ですが、一般公開する時は自前のメール送信（SMTP）の設定が必要です
 - 無料プランはしばらく使われないとプロジェクトが一時停止されることがあります
 - 招待した人だけにしたい時は「Authentication」→「Sign In / Providers」で新規登録を止められます（アカウントは「Users」から招待）
-- 通報は「Table Editor」→ `reports` で確認できます。対応する相手を共有ジムから外す時は `profiles` の `suspended` を true にします
+- 通報は「Table Editor」→ `reports` でも確認できます（運営メニューには未対応のものだけ出ます）
+- 管理者はアプリからは増やせません。上の SQL でだけ増やせます

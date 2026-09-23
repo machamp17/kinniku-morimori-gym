@@ -5,6 +5,7 @@
 
 import { EXERCISES } from './data.js';
 import * as cloud from './cloud.js';
+import { findNgWord, NG_MESSAGE } from './ngwords.js';
 
 const GUEST = 'kmg2.data.v1';
 let KEY = GUEST;
@@ -180,6 +181,7 @@ export function restoreWorkout(id) {
 export function postComment(comment, today) {
   const text = String(comment || '').trim().slice(0, 40);
   if (!text) throw new Error('ひとことを入力してください');
+  if (findNgWord(text)) throw new Error(NG_MESSAGE);
   const yesterday = ymd(new Date(Date.now() - 86400e3));
   const recent = listWorkouts().filter((w) => Date.now() - w.createdAt < 24 * 3600e3 && w.date >= yesterday).sort((a, b) => b.createdAt - a.createdAt)[0];
   if (recent) return saveWorkout({ id: recent.id, date: recent.date, entries: recent.entries, comment: text });
@@ -264,6 +266,8 @@ export async function flush() {
             w.version = row.version;
             w.firstCompletedAt = Date.parse(row.first_completed_at);
           } catch (e) {
+            // サーバーが受け付けない言葉だった: ひとことだけ外して、記録は残す
+            if (e.ngWord) { w.comment = ''; lastError = e.message; persist(); continue; }
             if (!e.conflict) throw e;
             // 別の端末で先に更新されていた: クラウド側を控え、どちらを残すか利用者に選んでもらう
             const remote = await cloud.fetchWorkout(w.id);

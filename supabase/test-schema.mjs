@@ -122,5 +122,45 @@ ok('通報が運営キューに入る', r.rows[0].n === 1);
 ok('通報一覧は利用者から読めない', (await as(B, `select * from public.reports`).catch(() => ({ rows: [] }))).rows.length === 0);
 ok('本人は停止フラグを外せない', await (async () => { await db.query(`update public.profiles set suspended = true where user_id = $1`, [A]); await as(A, `update public.profiles set suspended = false`); return (await db.query(`select suspended from public.profiles where user_id = $1`, [A])).rows[0].suspended === true; })());
 
+// 使ってほしくない言葉
+await db.query(`update public.profiles set suspended = false where user_id = $1`, [A]);
+const badIns = (uid, text) => fails(uid, `insert into public.workouts (id, record_date, entries, public_comment) values (gen_random_uuid(), $1, '[]', $2)`, [today, text]);
+ok('卑猥な言葉のひとことは保存できない', /ng_word/.test((await badIns(B, 'ちんこ最高')) || ''));
+ok('伏せ字・全角・カタカナでも弾く', /ng_word/.test((await badIns(B, 'ﾁ*ﾝ*ｺ')) || '') && /ng_word/.test((await badIns(B, 'ＦＵＣＫ')) || ''));
+ok('ふつうのひとことは保存できる', (await badIns(B, '今日は21世紀最高の胸の日。田中くんに勝った')) === null);
+ok('卑猥な表示名は保存できない', /ng_word/.test((await fails(A, `update public.profiles set display_name = 'まんこ'`)) || ''));
+ok('言葉の一覧は利用者から読めない', (await as(B, `select * from public.ng_words`).catch(() => ({ rows: [] }))).rows.length === 0);
+
+// 運営メニュー
+ok('管理者でなければ is_admin は偽', (await as(B, `select public.is_admin() as v`)).rows[0].v === false);
+ok('管理者でなければ通報一覧は空', (await as(B, `select * from public.admin_reports()`)).rows.length === 0);
+ok('管理者でなければひとことを消せない', /forbidden/.test((await fails(B, `select public.admin_clear_comment($1)`, [wa])) || ''));
+ok('管理者表は利用者から読めない', (await as(B, `select * from public.admins`).catch(() => ({ rows: [] }))).rows.length === 0);
+ok('管理者は利用者からは増やせない', !!(await fails(B, `insert into public.admins (user_id) values ($1)`, [B])));
+await db.query(`insert into public.admins (user_id) values ($1)`, [B]); // 運営がダッシュボードで登録
+ok('登録した人は is_admin が真', (await as(B, `select public.is_admin() as v`)).rows[0].v === true);
+r = await as(B, `select * from public.admin_reports()`);
+ok('管理者は通報一覧を見られる', r.rows.length === 1 && r.rows[0].target_user === A, `rows=${r.rows.length}`);
+ok('通報一覧に相手のひとことが載る', !!r.rows[0].comment);
+const rid = r.rows[0].report_id;
+await as(B, `select public.admin_clear_comment($1)`, [wa]);
+ok('管理者はひとことを消せる（記録は残る）', (await db.query(`select public_comment, entries from public.workouts where id = $1`, [wa])).rows[0].public_comment === null
+  && (await db.query(`select count(*)::int n from public.workouts where id = $1`, [wa])).rows[0].n === 1);
+r = await as(A, `select * from public.gym_now()`);
+ok('消したひとことは共有ジムからも消える', !r.rows.some((x) => x.workout_id === wa && x.comment));
+await as(B, `select public.admin_set_suspended($1, true)`, [A]);
+ok('管理者は共有ジムから外せる', (await db.query(`select suspended from public.profiles where user_id = $1`, [A])).rows[0].suspended === true);
+await as(A, `update public.profiles set display_name = 'エー'`);
+ok('外された本人は自分で戻せない', (await db.query(`select suspended from public.profiles where user_id = $1`, [A])).rows[0].suspended === true);
+await as(B, `select public.admin_set_suspended($1, false)`, [A]);
+ok('管理者は戻せる', (await db.query(`select suspended from public.profiles where user_id = $1`, [A])).rows[0].suspended === false);
+await as(B, `select public.admin_resolve_report($1, 'resolved')`, [rid]);
+ok('対応済みにすると通報一覧から消える', (await as(B, `select * from public.admin_reports()`)).rows.length === 0);
+await as(B, `select public.admin_ng_word('あばれんぼう', true)`);
+ok('管理者は言葉を足せる', /ng_word/.test((await badIns(A, 'あばれんぼう参上')) || ''));
+ok('足した言葉は一覧に出る', (await as(B, `select * from public.admin_ng_words()`)).rows.some((x) => x.word === 'あばれんぼう'));
+await as(B, `select public.admin_ng_word('あばれんぼう', false)`);
+ok('管理者は言葉を外せる', (await badIns(A, 'あばれんぼう参上')) === null);
+
 console.log(results.join('\n'));
 console.log(`\n${results.filter((x) => x.startsWith('PASS')).length}/${results.length} passed`);

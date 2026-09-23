@@ -1,8 +1,8 @@
 // オフラインでも開けるようにする。常にネットの最新を優先し、つながらない時だけ保存済みの控えを使う。
-const CACHE = 'kmg-v11';
+const CACHE = 'kmg-v12';
 const CORE = [
   './', './index.html', './css/app.css', './manifest.webmanifest',
-  './js/app/main.js', './js/app/data.js', './js/app/exercises.js', './js/app/store.js', './js/app/logo.js', './js/app/cloud.js', './js/app/config.js',
+  './js/app/main.js', './js/app/data.js', './js/app/exercises.js', './js/app/store.js', './js/app/logo.js', './js/app/cloud.js', './js/app/config.js', './js/app/ngwords.js',
   './js/art/character.js', './js/art/hair.js', './js/art/palette.js', './js/art/raster.js',
   './assets/gym-bg.webp', './assets/icon-192.png',
 ];

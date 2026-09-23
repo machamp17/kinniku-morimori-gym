@@ -82,6 +82,60 @@ create table if not exists public.reports (
 );
 
 /* ------------------------------------------------------------
+ * 使ってほしくない言葉（運営が足し引きできる）
+ * 伏せ字・全角・カタカナ・大文字をそろえてから、含まれていたら書き込みを断る。
+ * 一覧そのものは誰にも読ませない（避けかたを調べられないように）。
+ * ------------------------------------------------------------ */
+create table if not exists public.ng_words (
+  word text primary key check (char_length(word) between 1 and 40),
+  created_at timestamptz not null default now()
+);
+alter table public.ng_words enable row level security; -- ポリシーなし＝直接は読めない
+
+-- 文字をそろえる: 全角→半角・大文字→小文字・記号と空白を取る・カタカナ→ひらがな
+create or replace function public.norm_text (t text) returns text
+language sql immutable set search_path = '' as $$
+  select translate(
+    regexp_replace(lower(normalize(coalesce(t, ''), nfkc)), '[[:space:][:punct:]]', '', 'g'),
+    'ァアィイゥウェエォオカガキギクグケゲコゴサザシジスズセゼソゾタダチヂッツヅテデトドナニヌネノハバパヒビピフブプヘベペホボポマミムメモャヤュユョヨラリルレロヮワヰヱヲンヴ',
+    'ぁあぃいぅうぇえぉおかがきぎくぐけげこごさざしじすずせぜそぞただちぢっつづてでとどなにぬねのはばぱひびぴふぶぷへべぺほぼぽまみむめもゃやゅゆょよらりるれろゎわゐゑをんゔ')
+$$;
+
+create or replace function public.has_ng_word (t text) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.ng_words w where position(w.word in public.norm_text(t)) > 0)
+$$;
+
+insert into public.ng_words (word) values
+  ('まんこ'), ('おめこ'), ('ちんこ'), ('ちんぽ'), ('ちんちん'), ('ぽこちん'),
+  ('きんたま'), ('せっくす'), ('ぱいずり'), ('ふぇら'), ('なかだし'), ('中出し'),
+  ('ぶっかけ'), ('ざーめん'), ('射精'), ('精液'), ('性器'), ('陰部'),
+  ('おなにー'), ('おなに'), ('ますたーべーしょん'), ('せふれ'), ('やりまん'), ('せいこうい'),
+  ('性行為'), ('勃起'), ('ぼっき'), ('ろりこん'), ('しょたこん'), ('痴漢'),
+  ('れいぷ'), ('強姦'), ('猥褻'), ('わいせつ'), ('淫乱'), ('fuck'),
+  ('shit'), ('bitch'), ('cunt'), ('pussy'), ('dick'), ('asshole'),
+  ('whore'), ('slut'), ('sex'), ('porn'), ('blowjob'), ('nigger'),
+  ('faggot'), ('死ね'), ('殺す'), ('殺害'), ('きちがい'), ('気違い'),
+  ('基地外')
+on conflict do nothing;
+
+/* ------------------------------------------------------------
+ * 運営（管理者）
+ * 誰が管理者かは下の SQL で自分を入れる。アプリからは増やせない。
+ *   insert into public.admins (user_id) select id from auth.users where email = 'あなたのメール';
+ * ------------------------------------------------------------ */
+create table if not exists public.admins (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+alter table public.admins enable row level security; -- ポリシーなし＝直接は読めない
+
+create or replace function public.is_admin () returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.admins a where a.user_id = auth.uid ())
+$$;
+
+/* ------------------------------------------------------------
  * 書き込み時のルール（トリガー）
  * ------------------------------------------------------------ */
 -- 記録: 作成時刻・初回完了時刻はサーバーが決める。編集で24時間の期限を延ばさない。
@@ -91,6 +145,10 @@ language plpgsql set search_path = '' as $$
 begin
   if new.record_date > (now() at time zone coalesce(new.timezone, 'Asia/Tokyo'))::date then
     raise exception 'future_date' using errcode = 'P0001';
+  end if;
+  -- ひとことに使ってほしくない言葉があれば断る（運営が消した後の null は素通り）
+  if new.public_comment is not null and public.has_ng_word (new.public_comment) then
+    raise exception 'ng_word' using errcode = 'P0001';
   end if;
   if tg_op = 'INSERT' then
     new.user_id := auth.uid();
@@ -131,7 +189,10 @@ for each row execute function public.touch_updated_at ();
 create or replace function public.profiles_guard () returns trigger
 language plpgsql set search_path = '' as $$
 begin
-  if auth.uid () is null then
+  if new.display_name is not null and public.has_ng_word (new.display_name) then
+    raise exception 'ng_word' using errcode = 'P0001';
+  end if;
+  if auth.uid () is null or public.is_admin () then
     return new;
   end if;
   if tg_op = 'UPDATE' then
@@ -272,6 +333,94 @@ begin
   insert into public.reports (reporter, target_user, workout_id, reason) values (auth.uid (), owner, p_workout, left(p_reason, 200));
 end $$;
 
+/* ------------------------------------------------------------
+ * 運営メニュー（管理者だけ）
+ * アプリの「設定 → 運営メニュー」から呼ぶ。管理者でなければ空か forbidden。
+ * ------------------------------------------------------------ */
+-- 未対応の通報一覧（誰の・どのひとことが・なぜ通報されたか）
+drop function if exists public.admin_reports ();
+create or replace function public.admin_reports ()
+returns table (
+  report_id bigint, created_at timestamptz, reason text,
+  target_user uuid, display_name text, comment text, workout_id uuid,
+  suspended boolean, reports_total bigint
+)
+language sql stable security definer set search_path = '' as $$
+  select r.id, r.created_at, r.reason, r.target_user, p.display_name, w.public_comment, r.workout_id,
+    p.suspended, (select count(*) from public.reports r2 where r2.target_user = r.target_user)
+  from public.reports r
+  join public.profiles p on p.user_id = r.target_user
+  left join public.workouts w on w.id = r.workout_id
+  where public.is_admin () and r.status = 'open'
+  order by r.created_at desc
+  limit 200
+$$;
+
+-- 最近のひとこと（通報が無くても見回れるように。7日分）
+-- 共有ジムに出している人の分だけ。自分にしか見えない設定の人のひとことは運営も一覧しない
+drop function if exists public.admin_comments ();
+create or replace function public.admin_comments ()
+returns table (
+  workout_id uuid, target_user uuid, display_name text, comment text,
+  posted_at timestamptz, suspended boolean
+)
+language sql stable security definer set search_path = '' as $$
+  select w.id, w.user_id, p.display_name, w.public_comment, w.first_completed_at, p.suspended
+  from public.workouts w
+  join public.profiles p on p.user_id = w.user_id
+  where public.is_admin () and w.deleted_at is null and w.public_comment is not null
+    and p.join_gym
+    and w.first_completed_at > now() - interval '7 days'
+  order by w.first_completed_at desc
+  limit 200
+$$;
+
+-- ひとことだけ消す（トレーニングの記録そのものは本人のものなので残す）
+create or replace function public.admin_clear_comment (p_workout uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_admin () then raise exception 'forbidden'; end if;
+  update public.workouts set public_comment = null where id = p_workout;
+end $$;
+
+-- 共有ジムから外す / 戻す
+create or replace function public.admin_set_suspended (p_user uuid, p_on boolean)
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_admin () then raise exception 'forbidden'; end if;
+  update public.profiles set suspended = coalesce(p_on, true) where user_id = p_user;
+end $$;
+
+-- 通報を対応済みにする（resolved = 対処した / rejected = 問題なし）
+create or replace function public.admin_resolve_report (p_report bigint, p_status text)
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_admin () then raise exception 'forbidden'; end if;
+  if p_status not in ('resolved', 'rejected') then raise exception 'bad_status'; end if;
+  update public.reports set status = p_status where id = p_report;
+end $$;
+
+-- 使ってほしくない言葉の一覧・追加・削除
+create or replace function public.admin_ng_words ()
+returns table (word text, created_at timestamptz)
+language sql stable security definer set search_path = '' as $$
+  select w.word, w.created_at from public.ng_words w
+  where public.is_admin () order by w.created_at desc, w.word
+$$;
+create or replace function public.admin_ng_word (p_word text, p_add boolean)
+returns void language plpgsql security definer set search_path = '' as $$
+declare n text;
+begin
+  if not public.is_admin () then raise exception 'forbidden'; end if;
+  n := public.norm_text (p_word);
+  if n is null or char_length(n) = 0 then raise exception 'empty_word'; end if;
+  if coalesce(p_add, true) then
+    insert into public.ng_words (word) values (n) on conflict do nothing;
+  else
+    delete from public.ng_words where word = n;
+  end if;
+end $$;
+
 -- 関数を呼べるのはログイン中の利用者だけ
 revoke all on function public.gym_now () from public, anon;
 revoke all on function public.toggle_nice (uuid) from public, anon;
@@ -281,3 +430,24 @@ grant execute on function public.gym_now () to authenticated;
 grant execute on function public.toggle_nice (uuid) to authenticated;
 grant execute on function public.block_by_workout (uuid) to authenticated;
 grant execute on function public.report_workout (uuid, text) to authenticated;
+
+-- 運営メニュー（中で管理者かどうかを見ている）
+revoke all on function public.is_admin () from public, anon;
+revoke all on function public.admin_reports () from public, anon;
+revoke all on function public.admin_comments () from public, anon;
+revoke all on function public.admin_clear_comment (uuid) from public, anon;
+revoke all on function public.admin_set_suspended (uuid, boolean) from public, anon;
+revoke all on function public.admin_resolve_report (bigint, text) from public, anon;
+revoke all on function public.admin_ng_words () from public, anon;
+revoke all on function public.admin_ng_word (text, boolean) from public, anon;
+-- has_ng_word はトリガーの中から利用者の権限で呼ばれるので、実行だけは許可する
+revoke all on function public.has_ng_word (text) from public, anon;
+grant execute on function public.has_ng_word (text) to authenticated;
+grant execute on function public.is_admin () to authenticated;
+grant execute on function public.admin_reports () to authenticated;
+grant execute on function public.admin_comments () to authenticated;
+grant execute on function public.admin_clear_comment (uuid) to authenticated;
+grant execute on function public.admin_set_suspended (uuid, boolean) to authenticated;
+grant execute on function public.admin_resolve_report (bigint, text) to authenticated;
+grant execute on function public.admin_ng_words () to authenticated;
+grant execute on function public.admin_ng_word (text, boolean) to authenticated;

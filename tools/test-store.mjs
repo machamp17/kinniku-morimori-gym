@@ -129,5 +129,12 @@ store.upsertBody('2026-09-19', { kcal: 2100 });
 await store.flush();
 ok('朝の体重に夜カロリーを追記しても体重が残る', store.getBody('2026-09-19').weight === 70.8 && server.body.get('2026-09-19').weight === 70.8 && server.body.get('2026-09-19').kcal === 2100);
 
+// 使ってほしくない言葉
+store.setUser('user-d');
+const said = (t) => { try { store.postComment(t, '2026-09-19'); return null; } catch (e) { return e.message; } };
+ok('卑猥なひとことは投稿できない', /使えません/.test(said('ちんこ最高') || ''));
+ok('伏せ字にしても投稿できない', /使えません/.test(said('ち ん こ') || ''));
+ok('ふつうのひとことは投稿できる', said('今日は21世紀最高の胸の日') === null);
+
 console.log(results.join('\n'));
 console.log(`\n${results.filter((x) => x.startsWith('PASS')).length}/${results.length} passed`);

@@ -2,6 +2,7 @@
 // 私用データは本人の行だけ（RLS）。共有ジムは gym_now() が公開してよい列だけを返す。
 
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
+import { NG_MESSAGE } from './ngwords.js';
 
 export const enabled = !!(SUPABASE_URL && SUPABASE_KEY);
 const LIB = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/+esm';
@@ -19,6 +20,7 @@ export async function init() {
     });
     client.auth.onAuthStateChange((event, s) => {
       session = s;
+      adminFlag = null; // 別の人がログインしたら聞き直す
       listeners.forEach((f) => f(event, s));
     });
     const { data } = await client.auth.getSession();
@@ -93,7 +95,7 @@ export async function fetchProfile() {
 export async function upsertProfile(p) {
   need();
   const { error } = await client.from('profiles').upsert({ user_id: user().id, ...p }, { onConflict: 'user_id' });
-  if (error) throw new Error(jp(error));
+  if (error) throw new Error(/ng_word/.test(error.message) ? NG_MESSAGE : jp(error));
 }
 
 /* ---------- 記録 ---------- */
@@ -115,6 +117,7 @@ export async function pushWorkout(row) {
     const err = new Error(jp(error));
     if (/version_conflict/.test(error.message)) err.conflict = true;
     if (/future_date/.test(error.message)) err.message = '未来の日付には記録できません';
+    if (/ng_word/.test(error.message)) { err.ngWord = true; err.message = NG_MESSAGE; }
     throw err;
   }
   return data;
@@ -154,3 +157,27 @@ export async function report(workoutId, reason) {
   const { error } = await client.rpc('report_workout', { p_workout: workoutId, p_reason: reason || '' });
   if (error) throw new Error(/rate_limited/.test(error.message) ? '通報が多すぎます。時間をおいてください' : jp(error));
 }
+
+/* ---------- 運営メニュー（管理者だけ。管理者でなければ空か forbidden） ---------- */
+let adminFlag = null; // 1セッション1回だけ聞く
+export async function isAdmin() {
+  if (!client || !user()) return false;
+  if (adminFlag !== null) return adminFlag;
+  const { data, error } = await client.rpc('is_admin');
+  adminFlag = !error && data === true;
+  return adminFlag;
+}
+export const forgetAdmin = () => (adminFlag = null);
+const adminRpc = async (fn, args) => {
+  need();
+  const { data, error } = await client.rpc(fn, args);
+  if (error) throw new Error(/forbidden/.test(error.message) ? '運営の権限がありません' : jp(error));
+  return data;
+};
+export const adminReports = () => adminRpc('admin_reports');
+export const adminComments = () => adminRpc('admin_comments');
+export const adminClearComment = (workoutId) => adminRpc('admin_clear_comment', { p_workout: workoutId });
+export const adminSetSuspended = (userId, on) => adminRpc('admin_set_suspended', { p_user: userId, p_on: on });
+export const adminResolveReport = (reportId, status) => adminRpc('admin_resolve_report', { p_report: reportId, p_status: status });
+export const adminNgWords = () => adminRpc('admin_ng_words');
+export const adminNgWord = (word, add) => adminRpc('admin_ng_word', { p_word: word, p_add: add });
